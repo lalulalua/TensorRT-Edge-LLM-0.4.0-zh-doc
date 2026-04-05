@@ -1,0 +1,17 @@
+This repository contains source code and documentation derived from NVIDIA TensorRT-Edge-LLM 0.4.0.
+
+Original project:
+- Project: TensorRT-Edge-LLM
+- Copyright: NVIDIA CORPORATION & AFFILIATES and respective contributors
+- License: Apache License 2.0
+- Upstream release source: https://github.com/NVIDIA/TensorRT-Edge-LLM
+
+This repository is a non-official modified distribution prepared from the upstream 0.4.0 release archive.
+
+Modifications in this repository include, at minimum:
+- Chinese localization materials such as `docs_zh/`
+- A Chinese primary repository README
+- Repository metadata and attribution updates required for redistribution clarity
+
+All original copyright, patent, trademark, and attribution notices from the upstream project are retained where applicable.
+Additional modifications in this repository are distributed under the same Apache License 2.0 terms unless otherwise noted.

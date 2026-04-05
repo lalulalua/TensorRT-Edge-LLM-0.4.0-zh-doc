@@ -1,110 +1,124 @@
+> **修改说明：** 本文件在基于 NVIDIA TensorRT-Edge-LLM 0.4.0 发行源码整理的本仓库中已作调整。详见 [PROJECT_ORIGIN.md](PROJECT_ORIGIN.md)。英文说明见 [README_EN.md](README_EN.md)。
+
 # TensorRT Edge-LLM
 
-**High-Performance Large Language Model Inference Framework for NVIDIA Edge Platforms**
+**面向 NVIDIA 边缘平台的高性能大型语言模型推理框架**
 
 ---
 
-## Overview
+## 关于本仓库
 
-TensorRT Edge-LLM is NVIDIA's high-performance C++ inference runtime for Large Language Models (LLMs) and Vision-Language Models (VLMs) on embedded platforms. It enables efficient deployment of state-of-the-art language models on resource-constrained devices such as NVIDIA Jetson and NVIDIA DRIVE platforms. TensorRT Edge-LLM provides convenient Python scripts to convert HuggingFace checkpoints to [ONNX](https://onnx.ai). Engine build and end-to-end inference runs entirely on Edge platforms.
-
----
-
-## Getting Started
-
-For the supported platforms, models and precisions, see the [**Overview**](docs/source/developer_guide/01.1_Overview.md). Get started with TensorRT Edge-LLM in <15 minutes. For complete installation and usage instructions, see the [**Quick Start Guide**](docs/source/developer_guide/01.2_Quick_Start_Guide.md).
+本仓库是基于上游项目 [NVIDIA/TensorRT-Edge-LLM](https://github.com/NVIDIA/TensorRT-Edge-LLM) **0.4.0** 发行版源码整理的**非官方**修改分发，**不由 NVIDIA 维护**，也不代表 NVIDIA 背书或提供官方支持。后续针对**本 Git 仓库**的维护、改动与发布由当前仓库维护者负责。上游及第三方原有的版权与许可信息予以保留；许可仍以 [LICENSE](LICENSE) 为准，并请参阅 [NOTICE](NOTICE)、[PROJECT_ORIGIN.md](PROJECT_ORIGIN.md)。
 
 ---
 
-## Documentation
+## 概览
 
-### Developer Guide
-
-Complete documentation for installation, usage, and deployment:
-
-- **[Overview](docs/source/developer_guide/01.1_Overview.md)** - What is TensorRT Edge-LLM and key features
-- **[Quick Start Guide](docs/source/developer_guide/01.2_Quick_Start_Guide.md)** - Get started in ~15 minutes
-- **[Installation](docs/source/developer_guide/01.3_Installation.md)** - Detailed installation instructions
-- **[Supported Models](docs/source/developer_guide/02_Supported_Models.md)** - Complete model compatibility matrix
-- **[Python Export Pipeline](docs/source/developer_guide/03.1_Python_Export_Pipeline.md)** - Model export and quantization
-- **[Engine Builder](docs/source/developer_guide/03.2_Engine_Builder.md)** - Building TensorRT engines
-- **[C++ Runtime Overview](docs/source/developer_guide/04.1_C++_Runtime_Overview.md)** - Runtime system architecture
-  - [LLM Inference Runtime](docs/source/developer_guide/04.2_LLM_Inference_Runtime.md)
-  - [LLM SpecDecode Runtime](docs/source/developer_guide/04.3_LLM_Inference_SpecDecode_Runtime.md)
-  - [Advanced Runtime Features](docs/source/developer_guide/04.4_Advanced_Runtime_Features.md)
-- **[Examples](docs/source/developer_guide/05_Examples.md)** - Working code examples
-- **[Chat Template Format](docs/source/developer_guide/06_Chat_Template_Format.md)** - Chat template configuration
-- **[TensorRT Plugins](docs/source/developer_guide/07_TensorRT_Plugins.md)** - Introduction for TensorRT plugins.
-
-
-### Additional Resources
-
-- **[Examples Directory](examples/)** - LLM and VLM inference examples
-- **[Tests](tests/)** - Comprehensive test suite for contributors
+TensorRT Edge-LLM 是 NVIDIA 面向嵌入式平台的大型语言模型（LLM）与视觉语言模型（VLM）的高性能 C++ 推理运行时，支持在 NVIDIA Jetson、NVIDIA DRIVE 等资源受限设备上高效部署前沿语言模型。项目提供便捷的 Python 脚本，将 HuggingFace 检查点转换为 [ONNX](https://onnx.ai)。引擎构建与端到端推理均在边缘平台上完成。
 
 ---
 
-## Use Cases
+## 快速开始
 
-**🚗 Automotive**
-- In-vehicle AI assistants
-- Voice-controlled interfaces
-- Scene understanding
-- Driver assistance systems
-
-**🤖 Robotics**
-- Natural language interaction
-- Task planning and reasoning
-- Visual question answering
-- Human-robot collaboration
-
-**🏭 Industrial IoT**
-- Equipment monitoring with NLP
-- Automated inspection
-- Predictive maintenance
-- Voice-controlled machinery
-
-**📱 Edge Devices**
-- On-device chatbots
-- Offline language processing
-- Privacy-preserving AI
-- Low-latency inference
+支持的平台、模型与精度见 [**概览**](docs_zh/source/developer_guide/01.1_Overview.md)。约 15 分钟内可上手。完整安装与使用说明见 [**快速入门**](docs_zh/source/developer_guide/01.2_Quick_Start_Guide.md)。
 
 ---
 
-## Tech Blogs
+## 文档
 
-*Coming soon*
+### 开发者指南
 
-Stay tuned for technical deep-dives, optimization guides, and deployment best practices.
+安装、使用与部署的完整说明：
+
+- **[概览](docs_zh/source/developer_guide/01.1_Overview.md)** — TensorRT Edge-LLM 是什么及主要特性
+- **[快速入门](docs_zh/source/developer_guide/01.2_Quick_Start_Guide.md)** — 约 15 分钟跑通流程
+- **[安装](docs_zh/source/developer_guide/01.3_Installation.md)** — 详细安装说明
+- **[支持的模型](docs_zh/source/developer_guide/02_Supported_Models.md)** — 完整模型与精度兼容表
+- **[Python 导出流水线](docs_zh/source/developer_guide/03.1_Python_Export_Pipeline.md)** — 模型导出与量化
+- **[引擎构建器](docs_zh/source/developer_guide/03.2_Engine_Builder.md)** — 构建 TensorRT 引擎
+- **[C++ 运行时概览](docs_zh/source/developer_guide/04.1_C++_Runtime_Overview.md)** — 运行时系统架构
+  - [LLM 推理运行时](docs_zh/source/developer_guide/04.2_LLM_Inference_Runtime.md)
+  - [LLM SpecDecode 运行时](docs_zh/source/developer_guide/04.3_LLM_Inference_SpecDecode_Runtime.md)
+  - [高级运行时特性](docs_zh/source/developer_guide/04.4_Advanced_Runtime_Features.md)
+- **[示例](docs_zh/source/developer_guide/05_Examples.md)** — 可运行示例
+- **[对话模板格式](docs_zh/source/developer_guide/06_Chat_Template_Format.md)** — 对话模板配置
+- **[定制指南](docs_zh/source/developer_guide/07_Customization_Guide.md)** — 扩展与定制框架
+- **[TensorRT 插件](docs_zh/source/developer_guide/08_TensorRT_Plugins.md)** — TensorRT 插件说明
+
+> **与英文文档对照：** 英文索引见 [README_EN.md](README_EN.md)。部分上游英文文档中「TensorRT 插件」曾链接到不存在的 `07_TensorRT_Plugins.md`；仓库内实际文件为 `08_TensorRT_Plugins.md`，且包含 `07_Customization_Guide.md`；本仓库的 [README_EN.md](README_EN.md) 已按实际路径整理链接。
+
+### 其他资源
+
+- **[示例目录](examples/)** — LLM 与 VLM 推理示例
+- **[测试](tests/)** — 贡献者可用的完整测试集
 
 ---
 
-## Latest News
+## 适用场景
 
-*Coming soon*
+**车载**
 
-Follow our [GitHub repository](https://github.com/NVIDIA/TensorRT-Edge-LLM) for the latest updates, releases, and announcements.
+- 车内 AI 助手
+- 语音控制界面
+- 场景理解
+- 驾驶辅助
+
+**机器人**
+
+- 自然语言交互
+- 任务规划与推理
+- 视觉问答
+- 人机协作
+
+**工业物联网**
+
+- 基于 NLP 的设备监控
+- 自动化检测
+- 预测性维护
+- 语音控制设备
+
+**边缘设备**
+
+- 端侧聊天机器人
+- 离线语言处理
+- 隐私保护型 AI
+- 低延迟推理
 
 ---
 
-## Support
+## 技术博客
 
-- **Documentation**: [Developer Guide](docs/source/developer_guide/01.1_Overview.md)
-- **Issues**: [GitHub Issues](https://github.com/NVIDIA/TensorRT-Edge-LLM/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/NVIDIA/TensorRT-Edge-LLM/discussions)
-- **Forums**: [NVIDIA Developer Forums](https://forums.developer.nvidia.com/)
+*敬请期待*
+
+后续将发布技术深读、优化指南与部署最佳实践。
 
 ---
 
-## License
+## 最新动态
+
+*敬请期待*
+
+**NVIDIA 上游项目**的更新与发行说明见 [NVIDIA/TensorRT-Edge-LLM](https://github.com/NVIDIA/TensorRT-Edge-LLM)。若您关注的是**本非官方仓库**的变更，请使用您获取本仓库时所使用的 Git 托管平台上的 Issue 与 Release 信息。
+
+---
+
+## 支持
+
+- **文档**：[开发者指南](docs_zh/source/developer_guide/01.1_Overview.md)
+- **上游 NVIDIA 项目**（官方来源）：[GitHub Issues](https://github.com/NVIDIA/TensorRT-Edge-LLM/issues)、[Discussions](https://github.com/NVIDIA/TensorRT-Edge-LLM/discussions)
+- **本非官方仓库**：与**本分发**相关的问题，请使用当前仓库所在 Git 托管服务的 Issue（请勿默认当作 NVIDIA 官方支持渠道）。
+- **论坛**（一般性 NVIDIA 技术讨论）：[NVIDIA Developer Forums](https://forums.developer.nvidia.com/)
+
+---
+
+## 许可
 
 [Apache License 2.0](LICENSE)
 
 ---
 
-## Contributing
+## 贡献
 
-We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
+欢迎贡献。请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)，其中说明了如何区分向上游 NVIDIA 项目提交与向本仓库提交。
 
 ---

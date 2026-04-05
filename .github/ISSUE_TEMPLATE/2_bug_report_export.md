@@ -1,10 +1,12 @@
 ---
 name: Bug report - Python Export Pipeline
-about: Submit a bug report for the Python export pipeline (model quantization/export)
+about: Bug report for the Python export pipeline in this repo (unofficial distribution; upstream is NVIDIA/TensorRT-Edge-LLM)
 title: ''
 labels: bug, export
 assignees: ''
 ---
+
+<!-- Modified: adjusted for an unofficial TensorRT-Edge-LLM 0.4.0–based distribution; see PROJECT_ORIGIN.md. -->
 
 ## Describe the bug
 <!-- Description of what the bug is, its impact (blocker, should have, nice to have) and any stack traces or error messages. -->

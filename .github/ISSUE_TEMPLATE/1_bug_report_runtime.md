@@ -1,10 +1,12 @@
 ---
 name: Bug report - C++ Runtime
-about: Submit a bug report for the C++ runtime (engine building/inference)
+about: Bug report for the C++ runtime in this repo (unofficial distribution; upstream is NVIDIA/TensorRT-Edge-LLM)
 title: ''
 labels: bug, runtime
 assignees: ''
 ---
+
+<!-- Modified: adjusted for an unofficial TensorRT-Edge-LLM 0.4.0–based distribution; see PROJECT_ORIGIN.md. -->
 
 ## Describe the bug
 <!-- Description of what the bug is, its impact (blocker, should have, nice to have) and any stack traces or error messages. -->

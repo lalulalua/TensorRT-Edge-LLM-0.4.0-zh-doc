@@ -1,10 +1,11 @@
+> **Modified:** This file was changed after the NVIDIA TensorRT-Edge-LLM 0.4.0 release for this unofficial distribution. See [PROJECT_ORIGIN.md](PROJECT_ORIGIN.md).
 
 # TensorRT Edge-LLM Contribution Rules
 
 ## Issue Tracking
 
-* All enhancement, bugfix, or change requests must begin with the creation of a [TensorRT-Edge-LLM Issue Request](https://github.com/nvidia/TensorRT-Edge-LLM/issues).
-  * The issue request must be reviewed by TensorRT Edge-LLM engineers and approved prior to code review.
+* **Upstream NVIDIA TensorRT-Edge-LLM:** For defects and feature requests that should land in NVIDIA’s official project, use the [upstream issue tracker](https://github.com/NVIDIA/TensorRT-Edge-LLM/issues) and follow NVIDIA’s contribution process there.
+* **This repository (unofficial distribution):** For problems or changes specific to **this** fork or redistribution (for example, `docs_zh/`, packaging, or notices in this repo), open an issue in **this** repository’s issue tracker on the Git host where you cloned or forked it.
 
 ## Coding Guidelines
 
@@ -77,11 +78,11 @@ If any files were modified by this hook, you will need to stage and commit them 
 ## Pull Requests
 
 ### Developer workflow
-Developer workflow for code contributions is as follows:
+Developer workflow for code contributions to **this** repository is as follows:
 
-1. Developers must first [fork](https://help.github.com/en/articles/fork-a-repo) the [upstream](https://github.com/nvidia/TensorRT-Edge-LLM) TensorRT-Edge-LLM OSS repository.
+1. [Fork](https://help.github.com/en/articles/fork-a-repo) **this** repository on your Git host (or clone it with write access if you are a collaborator). To contribute to NVIDIA’s **upstream** project instead, use [NVIDIA/TensorRT-Edge-LLM](https://github.com/NVIDIA/TensorRT-Edge-LLM).
 
-2. Clone the forked repository and push changes to the personal fork.
+2. Clone the forked repository and push changes to your fork.
 
   ```bash
     git clone https://github.com/YOUR_USERNAME/YOUR_FORK.git TensorRT-Edge-LLM
@@ -90,19 +91,17 @@ Developer workflow for code contributions is as follows:
     git push -u origin <local-branch>:<remote-branch>
   ```
 
-3. Once the code changes are staged on the fork and ready for review, a [Pull Request](https://help.github.com/en/articles/about-pull-requests) (PR) can be [requested](https://help.github.com/en/articles/creating-a-pull-request) to merge the changes from a branch of the fork into a selected branch of upstream. PRs should typically target the `main` branch.
-  * Creation of a PR creation kicks off the code review process.
-  * At least one TensorRT-Edge-LLM engineer will be assigned for the review. When the PR is under review, the label `Pending Review` will be added to the PR.
-  * If changes are requested, then the reviewer will add the label `Changes Requested` to the PR.
-  * Once changes are approved, CI will be launched to validate the change. When CI passes, the reviewer will merge the PR.
-  * If CI reports any failures, it's up to the requester to fix any CI failures before requesting another review.
+3. Once the code changes are staged on the fork and ready for review, open a [Pull Request](https://help.github.com/en/articles/about-pull-requests) to merge your branch into the target branch of **this** repository (often `main` or `master`, depending on how this repo is configured).
+  * Creation of a PR kicks off the review process for **this** repo.
+  * Maintainers of **this** repository will review PRs when available. Labels such as `Pending Review` or `Changes Requested` may be used similarly to common open-source practice.
+  * If CI is configured on this repository, fix reported failures before requesting another review.
 
 ### PR Submission Policies
 
-The naming of the merge requests in TensorRT-Edge-LLM follows the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). If the PR includes an API change that might break user code/API usage, consider adding "BREAKING CHANGE" in the title so that reviewers know what to expect. Additionally, if the PR is not related to any bug and task, consider using "chore" or None as the placeholder.
+The naming of merge requests in TensorRT-Edge-LLM follows the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). If the PR includes an API change that might break user code/API usage, consider adding "BREAKING CHANGE" in the title so that reviewers know what to expect. Additionally, if the PR is not related to any bug and task, consider using "chore" or None as the placeholder.
 
 [!IMPORTANT]
-For NVIDIA developers, please include the JIRA number or NVBUG ID in the PR title whenever possible.
+For contributions intended for **NVIDIA’s upstream** repository: NVIDIA developers should include the JIRA number or NVBUG ID in the PR title when required by NVIDIA’s process, and follow internal branch rules described in the upstream project.
 
 Good PR Titles Examples:
 * feat: Add support for starcoder-v2 FP8 base + FP16/BF16 LoRA
@@ -123,11 +122,7 @@ In the PR description, please consider addressing these points:
 * Link to the related PRs.
 
 [!IMPORTANT]
-For NVIDIA developers,  please submit feature or bug fixes to the dedicated branch specified in the nvbug
-**Keywords** field. For example, if a bug is reported on the release/0.4.0 branch, please submit the fix to
-`release/0.4.0` instead of the main branch.
-
-Meanwhile, please add the "release blocker" label to any PRs that could potentially cause a release delay.
+For **NVIDIA upstream** contributions: submit feature or bug fixes to the branch specified in NVIDIA’s bug-tracking workflow (for example `release/0.4.0` when applicable). Add a "release blocker" label only when using NVIDIA’s upstream tracker and labels.
 
 
 ## Signing Your Work

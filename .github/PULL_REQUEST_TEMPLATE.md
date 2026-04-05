@@ -1,3 +1,5 @@
+> **Modified:** This template was changed after the NVIDIA TensorRT-Edge-LLM 0.4.0 release for this unofficial distribution. See [PROJECT_ORIGIN.md](../PROJECT_ORIGIN.md).
+
 ## What does this PR do?
 
 **Type of change:** ? <!-- Use one of the following: Bug fix, new feature, new example, new tests, documentation. -->
@@ -17,11 +19,11 @@
 ## Before your PR is "*Ready for review*"
 <!-- If you haven't finished some of the above items you can still open `Draft` PR. -->
 
-- **Make sure you read and follow [Contributor guidelines](https://github.com/NVIDIA/TensorRT-Edge-LLM/blob/main/CONTRIBUTING.md)** and your commits are signed.
+- **Make sure you read and follow [Contributor guidelines](../CONTRIBUTING.md)** and your commits are signed.
 - **Is this change backward compatible?**: Yes/No <!--- If No, explain why. -->
 - **Did you write any new necessary tests?**: Yes/No
 - **Did you add or update any necessary documentation?**: Yes/No
-- **Did you update [Changelog](https://github.com/NVIDIA/TensorRT-Edge-LLM/blob/main/CHANGELOG.md)?**: Yes/No <!--- Only for new features, API changes, critical bug fixes or bw breaking changes. -->
+- **Did you update [Changelog](../CHANGELOG.md)?**: Yes/No <!--- Only for new features, API changes, critical bug fixes or bw breaking changes. -->
 
 ## Additional Information
 <!-- E.g. related issue. -->

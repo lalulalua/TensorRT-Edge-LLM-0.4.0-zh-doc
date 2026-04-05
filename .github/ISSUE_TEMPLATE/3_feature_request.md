@@ -1,10 +1,12 @@
 ---
 name: Feature request
-about: Suggest a new feature or model support for TensorRT Edge-LLM
+about: Feature suggestion for this repo (unofficial distribution; upstream feature requests may belong on NVIDIA/TensorRT-Edge-LLM)
 title: ''
 labels: feature request
 assignees: ''
 ---
+
+<!-- Modified: adjusted for an unofficial TensorRT-Edge-LLM 0.4.0–based distribution; see PROJECT_ORIGIN.md. -->
 
 ### Detailed description of the requested feature
 <!-- Description of the feature being requested. Also provide any relevant information on what the feature will be used for -->
