@@ -60,7 +60,7 @@ class EdgeLLMDataset:
     Base class for formatting datasets for TensorRT Edge-LLM inference.
     
     This class provides a framework for converting various datasets into the JSON format
-    expected by the TensorRT Edge-LLM runtime, as specified in INPUT_FORMAT.md.
+    expected by the TensorRT Edge-LLM runtime, as specified in INPUT_FORMAT_en.md (English) or INPUT_FORMAT.md (Chinese).
     
     Attributes:
         dataset_name (str): Name of the dataset
@@ -159,7 +159,7 @@ class EdgeLLMDataset:
         """
         Process the entire dataset and save it as JSON file compatible with TensorRT Edge-LLM.
         
-        The output format follows the structure defined in INPUT_FORMAT.md:
+        The output format follows the structure defined in INPUT_FORMAT_en.md / INPUT_FORMAT.md:
         {
             "batch_size": <int>,
             "temperature": <float>,

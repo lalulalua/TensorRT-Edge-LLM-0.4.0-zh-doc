@@ -1,14 +1,14 @@
-# Input JSON File Format
+# 输入 JSON 文件格式
 
-This document describes the required format for the input JSON file used with the LLM inference tool.
+本文说明与 LLM 推理工具配合使用的输入 JSON 文件所须遵循的格式。
 
-## Overview
+## 概览
 
-The input JSON file contains configuration parameters and a list of requests to be processed by the LLM. Each request is a conversation consisting of multiple messages with roles and content. The tool supports both text-only and multimodal (text + images) inputs, as well as multi-turn conversations.
+输入 JSON 文件包含配置参数以及待 LLM 处理的请求列表。每条请求是一段由多条带角色与内容的 message 组成的对话。工具支持纯文本与多模态（文本 + 图像）输入，并支持多轮对话。
 
-## File Structure
+## 文件结构
 
-The JSON file must contain the following top-level structure:
+JSON 文件顶层须包含如下结构：
 
 ```json
 {
@@ -48,12 +48,14 @@ The JSON file must contain the following top-level structure:
 ```
 
 
-## LoRA (Low-Rank Adaptation) Support
+## LoRA（Low-Rank Adaptation）支持
 
-LoRA enables fine-tuned model inference using adapter weights. 
+LoRA 通过适配器权重支持微调模型的推理。
 
-### Defining Available LoRA Weights
-First, define all available LoRA adapters in the global `available_lora_weights` map:
+### 定义可用的 LoRA 权重
+
+首先在全局 `available_lora_weights` 映射中声明所有可用的 LoRA 适配器：
+
 ```json
 {
     "available_lora_weights": {
@@ -64,8 +66,10 @@ First, define all available LoRA adapters in the global `available_lora_weights`
 }
 ```
 
-### Per-Conversation LoRA Selection
-Then reference these adapters by name in each request:
+### 按对话选择 LoRA
+
+随后在每条请求中用名称引用上述适配器：
+
 ```json
 {
     "available_lora_weights": {
@@ -85,95 +89,97 @@ Then reference these adapters by name in each request:
 }
 ```
 
-### Requirements:
-- TensorRT engine built with LoRA support
-- LoRA weights in `.safetensors` format
-- LoRA adapters must be defined in `available_lora_weights` before being referenced by `lora_name`
-- **Important:** All requests within the same batch must use the same LoRA weights. Different LoRA weights are only supported across different batches.
+### 要求：
 
-## Global Parameters
+- 须使用支持 LoRA 的 TensorRT 构建流程生成 **engine 文件**（即带 LoRA 能力的 plan）
+- LoRA 权重须为 `.safetensors` 格式
+- 在通过 `lora_name` 引用前，必须先在 `available_lora_weights` 中定义对应适配器
+- **重要：** 同一 **batch** 内的所有请求必须使用相同的 LoRA 权重；不同 LoRA 仅能通过不同 batch 切换。
 
-### Required Parameters
+## 全局参数
 
-- **`requests`** (array of objects): A list of conversation requests. Each request is an object containing a `messages` array and optional per-conversation configuration.
+### 必填参数
 
-### Optional Parameters
+- **`requests`**（对象数组）：对话请求列表。每个请求为包含 `messages` 数组及可选逐对话配置的对象。
 
-- **`batch_size`** (integer, default: 1): Number of requests to process in a single batch
-- **`temperature`** (float, default: 1.0): Controls randomness in generation (0.0 = deterministic, higher = more random)
-- **`top_p`** (float, default: 0.8): Nucleus sampling parameter (0.0-1.0)
-- **`top_k`** (integer, default: 50): Top-k sampling parameter
-- **`max_generate_length`** (integer, default: 256): Maximum number of tokens to generate
-- **`apply_chat_template`** (boolean, default: true): Whether to apply chat template formatting with special tokens. When set to `false`, messages will be concatenated without role prefixes/suffixes or special tokens, useful for models that don't require chat template formatting
-- **`enable_thinking`** (boolean, default: false): Whether to enable thinking mode for models that support it. When set to `false`, standard generation prompt is used. When set to `true`, thinking-enabled generation prompt is used if available. This parameter only affects models with thinking mode support and is ignored for other models
-- **`available_lora_weights`** (object, default: {}): Map of LoRA adapter names to their file paths. Only needed for LoRA-enabled engines
+### 可选参数
 
-## System Prompt Behavior
+- **`batch_size`**（整数，默认 1）：单个 batch 内合并处理的请求条数
+- **`temperature`**（浮点，默认 1.0）：控制生成的随机性（0.0 更确定，越大越随机）
+- **`top_p`**（浮点，默认 0.8）：Nucleus 采样参数（0.0–1.0）
+- **`top_k`**（整数，默认 50）：Top-k 采样参数
+- **`max_generate_length`**（整数，默认 256）：最多生成的 token 数
+- **`apply_chat_template`**（布尔，默认 true）：是否套用对话模板并插入特殊 token。为 `false` 时，消息将不做角色前后缀与特殊 token 拼接，适用于不需要对话模板的模型
+- **`enable_thinking`**（布尔，默认 false）：是否启用思考模式（面向支持该能力的模型，如 Qwen3 系列）。为 `false` 时使用标准生成提示；为 `true` 时在可用时使用带思考的生成提示。对不支持思考模式的模型该字段无效
+- **`available_lora_weights`**（对象，默认 {}）：LoRA 名称到权重文件路径的映射；仅在使用支持 LoRA 的 **engine 文件**时需要
 
-- If a system message is provided in the request, it will be used
-- If no system message is provided, the model's default system prompt from the chat template will be used (if available)
+## 系统提示（System Prompt）行为
 
-## Request Structure
+- 若请求中提供了 system 消息，则使用该内容
+- 若未提供 system 消息，则使用对话模板中配置的模型默认 system 提示（若有）
 
-Each request in the `requests` array is an object with the following fields:
+## 请求结构
 
-### Required Fields
+`requests` 数组中每个请求对象可包含以下字段：
 
-- **`messages`** (array): An array of messages that form a conversation. This enables multi-turn conversations with context from previous exchanges.
+### 必填字段
 
-### Optional Fields
+- **`messages`**（数组）：构成一轮或多轮对话的消息列表，用于携带历史上下文。
 
-- **`lora_name`** (string): Name of the LoRA adapter to use for this conversation, referencing an entry in the global `available_lora_weights` map. This allows different conversations to use different fine-tuned adapters. Note that all requests within the same batch must use the same LoRA weights.
+### 可选字段
 
-- **`save_system_prompt_kv_cache`** (boolean, default: false): Whether to save the system prompt KV cache for later reuse. This is useful for optimizing performance when using the same system prompt across multiple requests, as it avoids recomputing the KV cache for the system prompt. Note: If any request in a batch sets this to `true`, all requests in that batch will cache the system prompt KV cache.
+- **`lora_name`**（字符串）：本对话使用的 LoRA 名称，对应全局 `available_lora_weights` 中的键。不同对话可选用不同微调适配器。注意：同一 batch 内须使用相同 LoRA 权重。
 
-### Message Structure
+- **`save_system_prompt_kv_cache`**（布尔，默认 false）：是否保存 system 提示对应的 **KV cache** 以供后续复用。在多条请求重复使用较长 system 提示时可减少重复计算。注意：若 batch 中任一条将该字段设为 `true`，则该 batch 内会对 system 提示做 **KV cache** 缓存行为（与示例程序实现一致）。
 
-Each message object contains:
+### 消息结构
 
-#### Required Fields
+每条 message 对象包含：
 
-- **`role`** (string): The role of the message sender. Must be one of:
-  - `"system"`: System instructions or context (optional, model default will be used if not provided)
-  - `"user"`: User input or question
-  - `"assistant"`: Assistant's previous response (for multi-turn conversations)
+#### 必填字段
 
-- **`content`** (string or array): The message content. Can be:
-  - **String format** (text-only, simpler): Direct text string
-  - **Array format** (multimodal): Array of content items for text, images, videos
+- **`role`**（字符串）：发送者角色，须为以下之一：
+  - `"system"`：系统指令或上下文（可省略，省略时可能使用模板默认）
+  - `"user"`：用户输入或问题
+  - `"assistant"`：助手历史回复（用于多轮）
 
-#### Content Formats
+- **`content`**（字符串或数组）：消息内容，可为：
+  - **字符串形式**（纯文本，较简单）：直接文本
+  - **数组形式**（多模态）：由文本、图像、视频等条目组成的列表
 
-**Simple String Format (Text-Only Messages):**
+#### 内容格式
 
-For text-only messages, you can use a simple string:
+**字符串形式（纯文本消息）：**
+
+纯文本可直接使用字符串：
+
 ```json
 "content": "Your text message here"
 ```
 
-**Array Format (Multimodal Messages):**
+**数组形式（多模态消息）：**
 
-For messages with images, videos, or mixed content, use an array of content items.
+含图像、视频或混合内容时，使用内容项数组。
 
-Each content item has a `type` field and type-specific fields:
+每项含 `type` 及类型相关字段：
 
-**For text content:**
-- **`type`**: `"text"`
-- **`text`** (string): The text content
+**文本项：**
+- **`type`**：`"text"`
+- **`text`**（字符串）：文本内容
 
-**For image content:**
-- **`type`**: `"image"`
-- **`image`** (string): Path to the image file
+**图像项：**
+- **`type`**：`"image"`
+- **`image`**（字符串）：图像文件路径
 
-**For video content:**
-- **`type`**: `"video"`
-- **`video`** (string): Path to the video file
+**视频项：**
+- **`type`**：`"video"`
+- **`video`**（字符串）：视频文件路径
 
-## Examples
+## 示例
 
-### Text-Only Input (Single Request)
+### 纯文本输入（单条请求）
 
-Using the simple string format for text-only messages:
+使用字符串形式承载纯文本：
 
 ```json
 {
@@ -199,14 +205,15 @@ Using the simple string format for text-only messages:
 }
 ```
 
-**Note:** You can also use the array format for text-only messages if preferred:
+**说明：** 纯文本也可改用数组形式，例如：
+
 ```json
 "content": [{"type": "text", "text": "Your message here"}]
 ```
 
-### Multi-Turn Conversation
+### 多轮对话
 
-Using simple string format for easy text conversations:
+字符串形式便于书写多轮文本对话：
 
 ```json
 {
@@ -240,9 +247,9 @@ Using simple string format for easy text conversations:
 }
 ```
 
-### Multimodal Input (Text + Images)
+### 多模态输入（文本 + 图像）
 
-For multimodal content, use the array format:
+多模态请使用数组形式：
 
 ```json
 {
@@ -272,9 +279,9 @@ For multimodal content, use the array format:
 }
 ```
 
-### Batch Processing (Multiple Requests)
+### 批处理（多条请求）
 
-You can mix string format (text-only) and array format (multimodal) in the same batch:
+同一 batch 内可混合字符串形式（纯文本）与数组形式（多模态）：
 
 ```json
 {
@@ -315,9 +322,9 @@ You can mix string format (text-only) and array format (multimodal) in the same 
 }
 ```
 
-### LoRA Input (Per-Conversation)
+### LoRA 输入（按对话指定）
 
-The format allows you to specify different LoRA adapters for each conversation by referencing them by name:
+通过名称在不同对话中选用不同 LoRA 适配器：
 
 ```json
 {
@@ -361,11 +368,11 @@ The format allows you to specify different LoRA adapters for each conversation b
 }
 ```
 
-**Note:** The above example will naturally process each conversation in separate batches (assuming `batch_size` is 1) since they use different LoRA weights. If you manually group them into the same batch by setting `batch_size` to 2 or higher, **the program will error out** with the message: "Different LoRA weights within the same batch are not supported".
+**说明：** 上例在 `batch_size` 为 1 时，每条请求自然落在独立 batch，因而可使用不同 LoRA。若手动将 `batch_size` 设为 2 或更大、把使用不同 LoRA 的请求并入同一 batch，**程序将报错**：`Different LoRA weights within the same batch are not supported`。
 
-### Raw Format Input (Without Chat Template)
+### 原始格式输入（不使用对话模板）
 
-When you want to use raw concatenation without chat template special tokens, set the global `apply_chat_template` parameter to `false`:
+若需不做对话模板拼接、不使用模板特殊 token，将全局参数 `apply_chat_template` 设为 `false`：
 
 ```json
 {
@@ -388,16 +395,17 @@ When you want to use raw concatenation without chat template special tokens, set
 }
 ```
 
-This will produce a raw prompt without any special tokens like `<|im_start|>`, `<|im_end|>`, etc. The text will be concatenated directly. This is useful for:
-- Models trained without chat templates
-- Custom prompt engineering
-- Direct control over the input format
+效果为原始拼接，不会插入 `<|im_start|>`、`<|im_end|>` 等模板特殊符号（具体符号以所用模板为准）。适用于：
 
-Note: The `apply_chat_template` flag applies to all requests in the batch for consistency.
+- 训练时未使用对话模板的模型
+- 自定义 prompt 工程
+- 需要直接控制输入形态的场景
 
-### System Prompt KV Cache Optimization
+注意：`apply_chat_template` 对同一 batch 内所有请求一致生效。
 
-When using long system prompts repeatedly, you can set `save_system_prompt_kv_cache` to `true` in a request to cache the system prompt's KV cache for reuse:
+### System 提示 **KV cache** 优化
+
+在反复使用较长 system 提示时，可将某条请求的 `save_system_prompt_kv_cache` 设为 `true`，以缓存 system 部分的 **KV cache** 供复用：
 
 ```json
 {
@@ -424,51 +432,49 @@ When using long system prompts repeatedly, you can set `save_system_prompt_kv_ca
 }
 ```
 
-This optimization is particularly useful for:
-- Long system prompts that are reused across multiple requests
-- Initialization phase setup where you want to cache system instructions
-- Scenarios where the same system context is used repeatedly
+典型适用场景：
 
-## Processing Behavior
+- 多条请求复用同一段较长 system 提示
+- 初始化阶段预先缓存系统指令
+- system 上下文在多次调用中保持不变
 
-1. **Chat Template Application**: The chat template (loaded from `processed_chat_template.json`) is automatically applied to format messages with the appropriate role prefixes/suffixes and special tokens when `apply_chat_template` is `true` (default)
-2. **Raw Format Mode**: When `apply_chat_template` is set to `false`, messages are concatenated without role-specific tokens or special formatting. This is useful for:
-   - Models that don't use chat templates
-   - Custom prompt formats
-   - Direct control over prompt structure
-   - Simple concatenation of text and images
-3. **System Prompts**: 
-   - If a system message is provided, it will be used
-   - If no system message is provided, the model's default system prompt from the chat template will be used (if available)
-4. **Batching**: Requests are processed in batches according to the `batch_size` parameter
-5. **Multi-Turn Support**: Each request can contain multiple messages to support conversation context
-6. **Content Type Handling**: 
-   - Text content is directly inserted into the formatted output
-   - Image/video placeholders are formatted according to the chat template
-7. **Image Loading**: Images are loaded from the specified file paths during processing
-8. **LoRA Weights**: LoRA adapters are loaded once at initialization from `available_lora_weights`, then switched per batch based on `lora_name` references
-9. **System Prompt KV Cache**: When `save_system_prompt_kv_cache` is set to `true` for a request, the system prompt's KV cache is saved for reuse, improving performance for repeated system prompts
-10. **Error Handling**: The tool will throw errors if:
-   - The JSON file cannot be parsed
-   - A message is missing the required `role` or `content` field
-   - A request object is missing the required `messages` field
-   - The `requests` field is not an array of objects
-   - Unknown content types are specified
-   - Different LoRA weights are specified for requests within the same batch
-   - A `lora_name` is referenced that is not defined in `available_lora_weights`
+## 处理行为说明
 
-## Notes
+1. **对话模板应用**：当 `apply_chat_template` 为 `true`（默认）时，会按 `processed_chat_template.json` 加载的模板为消息添加角色前后缀与特殊 token。
+2. **原始格式模式**：`apply_chat_template` 为 `false` 时，消息不经角色专用 token 或模板化格式直接拼接，适用于无模板模型、自定义 prompt、或简单的图文顺序拼接。
+3. **系统提示**：若提供 system 消息则使用之；否则使用模板中的默认 system（若有）。
+4. **批处理**：按 `batch_size` 将 `requests` 划分为多个 batch 依次处理。
+5. **多轮支持**：单条请求内可含多条 message，以携带完整对话上下文。
+6. **内容类型**：文本直接进入格式化后的 prompt；图像/视频占位按模板规则插入。
+7. **图像加载**：处理过程中按路径从磁盘加载图像（路径规则见文末「注意事项」）。
+8. **LoRA 权重**：初始化时根据 `available_lora_weights` 注册权重；运行期按 batch 的 `lora_name` 切换（须满足同 batch 同 LoRA 的约束）。
+9. **System 提示 KV cache**：当 `save_system_prompt_kv_cache` 为 `true` 时，缓存 system 提示对应的 **KV cache** 以加速后续复用。
+10. **错误处理**：在以下情况工具/程序会报错或抛异常：
+   - JSON 无法解析
+   - 消息缺少必填字段 `role` 或 `content`
+   - 请求对象缺少必填字段 `messages`
+   - `requests` 不是对象数组
+   - 出现未知 content `type`
+   - 同一 batch 内指定了不同 LoRA
+   - `lora_name` 在 `available_lora_weights` 中未定义
 
-- Image and video paths should be relative to the working directory or absolute paths
-- The chat template automatically adds appropriate special tokens and formatting
-- Assistant messages in the middle of a conversation enable multi-turn interactions with context
-- The format follows OpenAI's chat completion API structure for better interoperability
+## 注意事项
 
-## Key Design Principles
+- 图像与视频路径可为相对当前工作目录的相对路径，或绝对路径
+- 对话模板会自动添加约定好的特殊 token 与版式
+- 对话中间的 assistant 消息用于携带历史回复，实现多轮上下文
+- 整体结构与 OpenAI Chat Completions API 高度相似，便于互操作
 
-The input format is designed to:
-- **Follow OpenAI's chat completion API structure** for better interoperability
-- **Support multi-turn conversations** with full context from previous exchanges
-- **Enable per-conversation LoRA weights** for different fine-tuned adapters
-- **Handle multimodal inputs** (text, images, videos) in a unified way
-- **Maintain clear separation** between conversation requests and global parameters
+## 设计原则摘要
+
+输入格式旨在：
+
+- **对齐 OpenAI Chat Completions 结构**，便于生态互操作
+- **支持多轮对话**与完整历史上下文
+- **支持按对话选择 LoRA**，适配多种微调 **engine 文件**
+- **统一承载多模态**（文本、图像、视频）
+- **区分全局参数与逐请求对话内容**，职责清晰
+
+---
+
+**英文版说明：** 与本文对应的英文原文见同目录 [INPUT_FORMAT_en.md](INPUT_FORMAT_en.md)。

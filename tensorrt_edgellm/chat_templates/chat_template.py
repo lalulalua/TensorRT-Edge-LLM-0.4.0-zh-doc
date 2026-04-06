@@ -150,7 +150,7 @@ def _format_messages(tokenizer: Any,
             raise ValueError(
                 f"Unable to format messages using HuggingFace tokenizer's apply_chat_template method. "
                 f"Messages need to be in the format: role: <str>, content: <str|list of dicts>. "
-                f"Check INPUT_FORMAT.md for more details. Error: {e}") from e
+                f"Check examples/llm/INPUT_FORMAT_en.md (English) or INPUT_FORMAT.md (Chinese) for more details. Error: {e}") from e
 
 
 def _extract_prefix_suffix(text: str, placeholder: str) -> Tuple[str, str]:

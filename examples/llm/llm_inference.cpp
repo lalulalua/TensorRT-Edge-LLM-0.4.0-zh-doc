@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+// This file has been enhanced with deep Chinese annotations by Cursor AI.
+
 #include "common/trtUtils.h"
 #include "memoryMonitor.h"
 #include "profileFormatter.h"
@@ -39,12 +41,12 @@
 using namespace trt_edgellm;
 using Json = nlohmann::json;
 
-// llm_inference：示例级“壳”程序，负责 CLI、JSON 批量请求解析、加载 TensorRT Edge-LLM 插件、
-// 构造 LLMInferenceRuntime（或 Eagle 下的 LLMInferenceSpecDecodeRuntime）、可选捕获 CUDA Graph、
-// 驱动 cudaStream 上的 handleRequest 循环，并把文本/多模态输出写回 JSON。
-// 真正的 engine 反序列化、ExecutionContext、Activation Buffer、KV cache 等均在 edgellmCore 运行时内部完成；
-// 本文件侧重展示数据如何从磁盘 JSON 进入 runtime 请求结构，以及如何观测显存与耗时。
-
+/**
+ * @desc: 与 getopt_long 配套的 CLI 选项数值 ID（自 900 起避免与单字符短选项冲突）。
+ * @params: 无
+ * @return: 无
+ * @others: 详见 printUsage 英文说明；采样超参多数来自输入 JSON 而非 CLI。
+ */
 // Enum for command line option IDs (using traditional enum for C library compatibility)
 enum LLMInferenceOptionId : int
 {
@@ -66,21 +68,26 @@ enum LLMInferenceOptionId : int
     MAX_GENERATE_LENGTH = 915
 };
 
-// Eagle 投机解码：draft 模型扩展候选 token 树，base 模型批量校验；CLI 参数影响树形分支与验证宽度。
+/**
+ * @desc: Eagle 投机解码相关超参：draft 模型扩展候选 token 树，base 模型做批量校验。
+ * @params: 无（聚合类型）
+ * @return: 无
+ * @others: draftTopK 为每步分支扇出；draftStep 为树深度；verifyTreeSize 为送入 base 的节点数上界，须不超过 1+topK+(step-1)*topK^2。
+ */
 struct EagleArgs
 {
     bool enabled{false};
-
-    // draftTopK：每一步从 draft 分布中保留的候选分支数，决定 draft 树的扇出。
     int32_t draftTopK{10};
-
-    // draftStep：draft 扩展的层数，每多一层树更深、候选更多、验证开销更大。
     int32_t draftStep{6};
-
-    // verifyTreeSize：从完整 draft 树中选入 base 校验的 token 数上界；需不超过理论树规模 1 + topK + (step-1)*topK^2。
     int32_t verifyTreeSize{60};
 };
 
+/**
+ * @desc: llm_inference 命令行参数聚合；engine 路径、profile/warmup/Eagle 与对输入 JSON 的 batch/长度覆盖。
+ * @params: 无（聚合类型）
+ * @return: 无
+ * @others: batchSize/maxGenerateLength 为 -1 表示沿用 JSON；temperature/top_p/top_k 仅能从 JSON 指定。
+ */
 struct LLMInferenceArgs
 {
     bool help{false};
@@ -93,13 +100,17 @@ struct LLMInferenceArgs
     bool dumpProfile{false};
     int32_t warmup{0};
     bool dumpOutput{false};
-    // Override parameters (only batchSize and maxGenerateLength can be overridden via CLI)
-    // For other sampling parameters (temperature, top_p, top_k), please specify them in the input JSON file
-    int32_t batchSize{-1};         // -1 means use value from input file
-    int64_t maxGenerateLength{-1}; // -1 means use value from input file
+    int32_t batchSize{-1};
+    int64_t maxGenerateLength{-1};
     EagleArgs eagleArgs;
 };
 
+/**
+ * @desc: 向 stderr 打印 llm_inference 用法与选项（英文）。
+ * @params: programName 一般为 argv[0]
+ * @return: 无
+ * @others: 无
+ */
 void printUsage(char const* programName)
 {
     std::cerr << "Usage: " << programName
@@ -134,6 +145,12 @@ void printUsage(char const* programName)
     std::cerr << "                            Total draft tree size: 1 + topK + (step-1) * topK^2" << std::endl;
 }
 
+/**
+ * @desc: 解析 CLI 并校验必填项（inputFile、engineDir、outputFile）；设置 TensorRT 日志级别。
+ * @params: args 输出；argc/argv 标准主函数形参
+ * @return: 成功 true；缺参或非法数值 false
+ * @others: 遇 HELP 时置 args.help 并返回 true；与 parseInputFile 独立。
+ */
 bool parseLLMInferenceArgs(LLMInferenceArgs& args, int argc, char* argv[])
 {
     static struct option inferenceOptions[] = {{"help", no_argument, 0, LLMInferenceOptionId::HELP},
@@ -332,8 +349,12 @@ bool parseLLMInferenceArgs(LLMInferenceArgs& args, int argc, char* argv[])
     return true;
 }
 
-// 将 Edge LLM JSON 转为一批 rt::LLMGenerationRequest：全局采样参数 + 按 batch_size 切分的对话列表。
-// 多模态消息中 type==image 的路径会在此阶段读入主机内存（imageUtils::loadImageFromFile），随后随 request 交给运行时上传设备。
+/**
+ * @desc: 读取输入 JSON，解析全局采样与模板开关，按 batch_size 切分为多份 LLMGenerationRequest；收集 LoRA 路径映射。
+ * @params: inputFilePath 文件路径；batchSizeOverride/maxGenerateLengthOverride 为 -1 时使用 JSON 内数值
+ * @return: pair：LoRA 名->权重路径映射，以及 batch 请求向量；失败抛 std::runtime_error
+ * @others: 图像在 CPU 侧 decode 入 imageBuffers，再交给运行时上传 GPU 与视觉 engine；上下文 prefill、增量解码、KV cache、logits 均在 edgellmCore 内完成，不在此函数。
+ */
 std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGenerationRequest>> parseInputFile(
     std::filesystem::path const& inputFilePath, int32_t batchSizeOverride = -1, int64_t maxGenerateLengthOverride = -1)
 {
@@ -348,6 +369,7 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
     }
     try
     {
+        // 整文件解析为 nlohmann::json；大文件时注意内存占用（评测 JSON 可能较大）。
         inputData = Json::parse(inputFileStream);
         inputFileStream.close();
     }
@@ -413,7 +435,6 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
         auto& requestsArray = inputData["requests"];
         size_t numRequests = requestsArray.size();
 
-        // Process requests in batches according to batchSize
         for (size_t startIdx = 0; startIdx < numRequests; startIdx += batchSize)
         {
             rt::LLMGenerationRequest batchRequest;
@@ -442,11 +463,7 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
                     throw std::runtime_error("Each request must be an object with 'messages' key");
                 }
 
-                // Explicit query whether to save the system prompt KVCache of this message for later reuse.
-                // This logic has limitation that once one prompt sets saveSystemPromptKVCache to true, all prompts in
-                // the same batch will cache system prompt KVCache. Since long instruction cache saving is
-                // usually done during system setup, this limitation can be resolved by issuing single batch request at
-                // initialization stage for KVCache saving.
+                // 任一条目置 true 则整 batch 标记 saveSystemPromptKVCache（示例程序限制）；适合初始化阶段单独发 batch 缓存长 system。
                 bool saveSystemPromptKVCache = requestItem.value("save_system_prompt_kv_cache", false);
                 if (saveSystemPromptKVCache)
                 {
@@ -592,6 +609,12 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
     return std::make_pair(std::move(loraWeightsMap), std::move(batchedRequests));
 }
 
+/**
+ * @desc: llm_inference 入口：解析 CLI、加载插件、解析 JSON、创建 Runtime 与 stream、可选 CUDA Graph、warmup、逐 batch 调用 handleRequest、写出结果与 profile。
+ * @params: argc/argv 标准主函数形参
+ * @return: EXIT_SUCCESS 或 EXIT_FAILURE（任一批次失败则失败）
+ * @others: pluginHandles 持有动态库句柄生命周期；handleRequest 内完成 TensorRT engine 执行、KV cache 与采样，本文件仅编排数据流与观测。
+ */
 int main(int argc, char* argv[])
 {
     LLMInferenceArgs args;
@@ -719,6 +742,7 @@ int main(int argc, char* argv[])
         {
             rt::LLMGenerationResponse warmupResponse;
             bool requestStatus = false;
+            // 与正式推理相同走 handleRequest，预热 CUDA Graph / 缓存，不计入 profile。
             if (args.eagleArgs.enabled)
             {
                 requestStatus = eagleInferenceRuntime->handleRequest(firstRequest, warmupResponse, stream);
@@ -767,6 +791,7 @@ int main(int argc, char* argv[])
         }
 
         bool requestStatus = false;
+        // handleRequest：内部串起 prefill、解码步进、KV cache 更新与 logits 采样；GPU 工作经 stream 提交，同步点在实现内。
         if (args.eagleArgs.enabled)
         {
             requestStatus = eagleInferenceRuntime->handleRequest(request, response, stream);
@@ -964,6 +989,5 @@ int main(int argc, char* argv[])
         return EXIT_FAILURE;
     }
 
-    // Return false if any request failed
     return hasFailedRequest ? EXIT_FAILURE : EXIT_SUCCESS;
 }

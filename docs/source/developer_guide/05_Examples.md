@@ -231,7 +231,7 @@ For multimodal (VLM) models, create an input JSON file with image content:
 
 ### LLM Input Format (`input.json`)
 
-For standard LLM models (text-only), refer to `examples/llm/INPUT_FORMAT.md`.
+For standard LLM models (text-only), refer to `examples/llm/INPUT_FORMAT_en.md`.
 
 ---
 
@@ -262,7 +262,7 @@ For standard LLM models (text-only), refer to `examples/llm/INPUT_FORMAT.md`.
 | `--dumpProfile` | Enable profiling |
 | `--profileOutputFile` | Profile output path |
 
-**Note:** Sampling parameters (temperature, top_p, top_k) go in the input JSON. Refer to `examples/llm/INPUT_FORMAT.md`.
+**Note:** Sampling parameters (temperature, top_p, top_k) go in the input JSON. Refer to `examples/llm/INPUT_FORMAT_en.md`.
 
 ---
 

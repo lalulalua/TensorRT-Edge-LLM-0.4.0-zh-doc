@@ -160,7 +160,7 @@ In your input JSON, set the `enable_thinking` parameter to control which generat
 
 **Note:** The specific mechanism for enabling/disabling thinking varies by model and is determined during model export when the chat template is extracted from the tokenizer.
 
-For more details on the `enable_thinking` parameter, see [INPUT_FORMAT.md](../../../examples/llm/INPUT_FORMAT.md).
+For more details on the `enable_thinking` parameter, see [INPUT_FORMAT_en.md](../../../examples/llm/INPUT_FORMAT_en.md).
 
 ---
 
@@ -404,4 +404,4 @@ Result: Uses "You are a math tutor." regardless of the chat template's default.
 
 Result: Since no explicit system message exists, uses the `default_system_prompt` from `processed_chat_template.json` (if defined).
 
-For more details on the input JSON format, see [INPUT_FORMAT.md](../../../examples/llm/INPUT_FORMAT.md).
+For more details on the input JSON format, see [INPUT_FORMAT_en.md](../../../examples/llm/INPUT_FORMAT_en.md).

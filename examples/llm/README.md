@@ -43,7 +43,7 @@
 | `edgellmTokenizer` | 文本与多模态模板相关的分词与编码 |
 | `exampleUtils` | 显存与性能信息辅助（见 [utils/README.md](../utils/README.md)） |
 
-输入输出格式等细节可参考同目录 [`INPUT_FORMAT.md`](INPUT_FORMAT.md)（保持英文原文，不在此翻译）。
+输入 JSON 的字段与示例见同目录 **[INPUT_FORMAT.md](INPUT_FORMAT.md)（中文）**；英文原文见 **[INPUT_FORMAT_en.md](INPUT_FORMAT_en.md)**。
 
 ---
 

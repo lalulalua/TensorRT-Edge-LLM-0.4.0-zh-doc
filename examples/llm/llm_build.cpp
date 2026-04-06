@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+// This file has been enhanced with deep Chinese annotations by Cursor AI.
+
 #include "builder/builder.h"
 #include "common/cudaUtils.h"
 #include "common/fileUtils.h"
@@ -28,10 +30,12 @@
 
 using namespace trt_edgellm;
 
-// 本文件实现 llm_build 可执行程序：从 ONNX 导出目录读取 config.json 与图结构，
-// 调用 edgellmBuilder 将网络编译为 TensorRT plan，并序列化写入 --engineDir 指定的目录（即“engine 文件”产物目录）。
-// maxInputLen / maxKVCacheCapacity / maxBatchSize 等参数在构建期固定进 engine，直接决定运行时可用的上下文上限与显存占用规模。
-
+/**
+ * @desc: 与 getopt_long 配合使用的 CLI 选项数值 ID；使用整型枚举以便与 C 库 longopts 表兼容。
+ * @params: 无
+ * @return: 无
+ * @others: 数值需避免与 getopt 返回的字符冲突，故从 701 起编号。
+ */
 // Enum for command line option IDs (using traditional enum for C library compatibility)
 enum LLMBuildOptionId : int
 {
@@ -52,6 +56,12 @@ enum LLMBuildOptionId : int
     MAX_IMAGE_TOKENS = 715
 };
 
+/**
+ * @desc: 解析后的 llm_build 命令行参数，映射到 LLMBuilderConfig 并影响 engine 文件中的 TensorRT profile 与 KV 上限。
+ * @params: 无（聚合类型）
+ * @return: 无
+ * @others: maxLoraRank 为 0 表示不启用动态 LoRA；VLM 相关 token 范围须与 visual_build / 文本侧构建保持一致。
+ */
 struct LLMBuildArgs
 {
     bool help{false};
@@ -61,7 +71,7 @@ struct LLMBuildArgs
     int64_t maxKVCacheCapacity{4096};
     bool debug{false};
     int64_t maxBatchSize{4};
-    int64_t maxLoraRank{0}; // 0 表示构建的 engine 不包含动态 LoRA 槽位
+    int64_t maxLoraRank{0};
     bool eagleDraft{false};
     bool eagleBase{false};
     int64_t maxVerifyTreeSize{60};
@@ -71,6 +81,12 @@ struct LLMBuildArgs
     int64_t maxImageTokens{1024};
 };
 
+/**
+ * @desc: 向 stderr 打印用法与选项说明（英文），供非法参数或 --help 时使用。
+ * @params: programName 可执行文件名（通常为 argv[0]）
+ * @return: 无
+ * @others: 仅输出文本，不参与业务逻辑。
+ */
 void printUsage(char const* programName)
 {
     std::cerr << "Usage: " << programName
@@ -106,6 +122,12 @@ void printUsage(char const* programName)
     std::cerr << "  --maxImageTokens          Maximum image tokens for VLM. Default = 1024" << std::endl << std::endl;
 }
 
+/**
+ * @desc: 使用 getopt_long 解析命令行，填充 LLMBuildArgs；遇 HELP 则置 help 并返回 true。
+ * @params: args 输出参数；argc/argv 标准主函数形参
+ * @return: 解析是否成功（非法选项或缺参时 false）
+ * @others: 不校验 onnxDir/engineDir 非空，由 main 与后续文件检查承担。
+ */
 bool parseLLMBuildArgs(LLMBuildArgs& args, int argc, char* argv[])
 {
     static struct option buildOptions[] = {{"help", no_argument, 0, LLMBuildOptionId::HELP},
@@ -125,6 +147,7 @@ bool parseLLMBuildArgs(LLMBuildArgs& args, int argc, char* argv[])
         {"maxImageTokens", required_argument, 0, LLMBuildOptionId::MAX_IMAGE_TOKENS}, {0, 0, 0, 0}};
 
     int opt;
+    // 逐项消费 argv；optarg 指向当前选项的参数串（若有）。
     while ((opt = getopt_long(argc, argv, "", buildOptions, nullptr)) != -1)
     {
         switch (opt)
@@ -210,6 +233,12 @@ bool parseLLMBuildArgs(LLMBuildArgs& args, int argc, char* argv[])
     return true;
 }
 
+/**
+ * @desc: llm_build 入口：解析 CLI、校验 ONNX 目录下 config.json、组装 LLMBuilderConfig 并调用 LLMBuilder 生成 engine 文件。
+ * @params: argc 参数个数；argv 参数向量
+ * @return: EXIT_SUCCESS 成功或仅打印 help；EXIT_FAILURE 解析失败、缺文件或 build() 失败
+ * @others: TensorRT 日志级别由 --debug 控制；真正构图与序列化均在 edgellmBuilder 内完成。
+ */
 int main(int argc, char** argv)
 {
     LLMBuildArgs args;
@@ -234,7 +263,7 @@ int main(int argc, char** argv)
         gLogger.setLevel(nvinfer1::ILogger::Severity::kINFO);
     }
 
-    // 导出流水线会在 ONNX 旁写入 config.json；构建器据此恢复模型元数据（如词表、架构与 VLM 开关），缺失则无法对齐网络。
+    // 导出流水线在 ONNX 目录写入 config.json，供构建器恢复元数据（词表、架构、VLM 开关等）。
     std::string configPath = args.onnxDir + "/config.json";
     std::ifstream configFile(configPath);
     if (!configFile.good())
@@ -244,7 +273,7 @@ int main(int argc, char** argv)
     }
     configFile.close();
 
-    // 将 CLI 超参灌入 LLMBuilderConfig；后续 LLMBuilder 内部会据此设置 TensorRT profile、插件与 KV 相关上限。
+    // 将 CLI 映射为 LLMBuilderConfig；内部据此设置 TensorRT profile、插件与 KV cache 容量等构建期常量。
     builder::LLMBuilderConfig config;
     config.maxInputLen = args.maxInputLen;
     config.maxKVCacheCapacity = args.maxKVCacheCapacity;
@@ -258,7 +287,7 @@ int main(int argc, char** argv)
     config.minImageTokens = args.minImageTokens;
     config.maxImageTokens = args.maxImageTokens;
 
-    // ONNX 目录 -> 解析与优化 -> 序列化 engine 文件到 engineDir；失败时返回 false（常见原因：ONNX 与 TRT 版本不兼容、显存不足）。
+    // ONNX 目录经解析与 TensorRT 优化后，序列化写入 engineDir；失败常见于版本不兼容或显存不足。
     builder::LLMBuilder llmBuilder(args.onnxDir, args.engineDir, config);
     if (!llmBuilder.build())
     {
