@@ -39,6 +39,12 @@
 using namespace trt_edgellm;
 using Json = nlohmann::json;
 
+// llm_inference：示例级“壳”程序，负责 CLI、JSON 批量请求解析、加载 TensorRT Edge-LLM 插件、
+// 构造 LLMInferenceRuntime（或 Eagle 下的 LLMInferenceSpecDecodeRuntime）、可选捕获 CUDA Graph、
+// 驱动 cudaStream 上的 handleRequest 循环，并把文本/多模态输出写回 JSON。
+// 真正的 engine 反序列化、ExecutionContext、Activation Buffer、KV cache 等均在 edgellmCore 运行时内部完成；
+// 本文件侧重展示数据如何从磁盘 JSON 进入 runtime 请求结构，以及如何观测显存与耗时。
+
 // Enum for command line option IDs (using traditional enum for C library compatibility)
 enum LLMInferenceOptionId : int
 {
@@ -60,22 +66,18 @@ enum LLMInferenceOptionId : int
     MAX_GENERATE_LENGTH = 915
 };
 
-// Struct to hold Eagle-specific arguments for speculative decoding
+// Eagle 投机解码：draft 模型扩展候选 token 树，base 模型批量校验；CLI 参数影响树形分支与验证宽度。
 struct EagleArgs
 {
     bool enabled{false};
 
-    // Number of tokens selected per drafting step from the draft model's output distribution.
-    // This controls the branching factor at each level of the draft tree.
+    // draftTopK：每一步从 draft 分布中保留的候选分支数，决定 draft 树的扇出。
     int32_t draftTopK{10};
 
-    // Number of drafting steps to perform with the draft model.
-    // Each step extends the draft tree by one more level.
+    // draftStep：draft 扩展的层数，每多一层树更深、候选更多、验证开销更大。
     int32_t draftStep{6};
 
-    // Number of tokens to select from the complete draft tree for base model verification.
-    // The total draft tree size is: 1 + draftTopK + (draftStep - 1) * draftTopK * draftTopK
-    // This parameter should be <= total draft tree size for optimal performance.
+    // verifyTreeSize：从完整 draft 树中选入 base 校验的 token 数上界；需不超过理论树规模 1 + topK + (step-1)*topK^2。
     int32_t verifyTreeSize{60};
 };
 
@@ -330,6 +332,8 @@ bool parseLLMInferenceArgs(LLMInferenceArgs& args, int argc, char* argv[])
     return true;
 }
 
+// 将 Edge LLM JSON 转为一批 rt::LLMGenerationRequest：全局采样参数 + 按 batch_size 切分的对话列表。
+// 多模态消息中 type==image 的路径会在此阶段读入主机内存（imageUtils::loadImageFromFile），随后随 request 交给运行时上传设备。
 std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGenerationRequest>> parseInputFile(
     std::filesystem::path const& inputFilePath, int32_t batchSizeOverride = -1, int64_t maxGenerateLengthOverride = -1)
 {
@@ -353,7 +357,7 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
         throw std::runtime_error("Failed to parse input file: " + inputFilePath.string());
     }
 
-    // Extract global parameters
+    // 全局超参：同一 JSON 内所有 batch 共享 temperature/top_p/top_k/max_generate_length（除非 CLI 覆盖后两者）。
     int batchSize = (batchSizeOverride != -1) ? batchSizeOverride : inputData.value("batch_size", 1);
     if (batchSize <= 0)
     {
@@ -403,7 +407,7 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
         }
     }
 
-    // Parse requests and create batched requests
+    // requests 数组按 batchSize 滑窗聚合为多个 LLMGenerationRequest；同一 batch 内 lora_name 必须一致（权重名映射在返回的 map 中）。
     if (inputData.contains("requests") && inputData["requests"].is_array())
     {
         auto& requestsArray = inputData["requests"];
@@ -537,7 +541,7 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
                             else if (msgContent.type == "image")
                             {
                                 msgContent.content = contentItemJson["image"].get<std::string>();
-                                // TODO: Need to consider multi-turn conversation, and whether to load all images.
+                                // 图像解码在 CPU 侧完成，buffer 挂在 request.imageBuffers，后续由 runtime 负责拷到 GPU 并走视觉 engine。
                                 auto image = rt::imageUtils::loadImageFromFile(msgContent.content);
                                 if (image.buffer != nullptr)
                                 {
@@ -603,14 +607,14 @@ int main(int argc, char* argv[])
     }
     bool profilerEnabled = args.dumpProfile;
     MemoryMonitor memoryMonitor;
-    // Start memory monitoring at the beginning if profiling is enabled
+    // 仅在需要打印/导出 profile 时开启监控，避免对纯推理路径增加后台线程与 cudaMemGetInfo 开销。
     if (profilerEnabled)
     {
         memoryMonitor.start();
     }
 
+    // 加载 Edge LLM 自定义 TensorRT 插件动态库；无插件则包含自定义层的 engine 无法反序列化执行。
     auto pluginHandles = loadEdgellmPluginLib();
-    // load input file and parse to requests
     std::unordered_map<std::string, std::string> loraWeightsMap;
     std::vector<rt::LLMGenerationRequest> batchedRequests;
     try
@@ -632,7 +636,8 @@ int main(int argc, char* argv[])
         return EXIT_FAILURE;
     }
 
-    // Create runtime based on mode
+    // 运行时构造时会从 engineDir 读取序列化 plan 并建立推理状态；multimodalEngineDir 非空则额外加载视觉 engine。
+    // 所有 GPU 提交默认经 stream，便于与可选 CUDA Graph 捕获范围对齐。
     std::unique_ptr<rt::LLMInferenceRuntime> llmInferenceRuntime{nullptr};
     std::unique_ptr<rt::LLMInferenceSpecDecodeRuntime> eagleInferenceRuntime{nullptr};
     cudaStream_t stream;
@@ -640,7 +645,7 @@ int main(int argc, char* argv[])
 
     if (args.eagleArgs.enabled)
     {
-        // Eagle mode - LoRA is not supported
+        // Eagle 路径当前不支持随请求切换 LoRA 权重映射。
         if (!loraWeightsMap.empty())
         {
             LOG_WARNING("Eagle mode does not support LoRA weights. Ignoring LoRA weights.");
@@ -659,6 +664,7 @@ int main(int argc, char* argv[])
             return EXIT_FAILURE;
         }
 
+        // 三次 capture*CudaGraph：将 draft/base 各阶段的重复 kernel 启动固化为 CUDA Graph，降低 launch 开销；失败则退回普通 enqueue。
         bool const draftProposalCaptureStatus = eagleInferenceRuntime->captureDraftProposalCudaGraph(stream);
         if (!draftProposalCaptureStatus)
         {
@@ -684,7 +690,7 @@ int main(int argc, char* argv[])
     }
     else
     {
-        // Standard mode
+        // 标准自回归解码：构造时传入 loraWeightsMap，运行期可按请求名加载对应权重（与 Eagle 路径互斥）。
         try
         {
             llmInferenceRuntime = std::make_unique<rt::LLMInferenceRuntime>(
@@ -695,16 +701,16 @@ int main(int argc, char* argv[])
             LOG_ERROR("Failed to initialize LLMInferenceRuntime: %s", e.what());
             return EXIT_FAILURE;
         }
+        // 解码阶段同样可捕获 CUDA Graph；首次捕获会执行一遍“模板”推理以记录依赖。
         if (!llmInferenceRuntime->captureDecodingCUDAGraph(stream))
         {
             LOG_WARNING("Failed to capture CUDA graph for decoding usage, proceeding with normal engine execution.");
         }
     }
 
-    // Perform warmup runs if requested
+    // Warmup：用首个 batch 反复跑通以完成 JIT/缓存/graph 稳定化；期间关闭 profiling 计时，避免污染正式 benchmark。
     if (args.warmup > 0)
     {
-        // Disable profiling for warmup runs
         setProfilingEnabled(false);
         LOG_INFO("Starting warmup with %d runs using the first request...", args.warmup);
         auto& firstRequest = batchedRequests[0];
@@ -736,7 +742,7 @@ int main(int argc, char* argv[])
         setProfilingEnabled(true);
     }
 
-    // Structure to collect all responses for JSON export
+    // 主循环：每个 batch 调用 handleRequest，在 stream 上完成 prefill+decode；response 内为 CPU 侧 std::string 输出。
     nlohmann::json outputData;
     outputData["input_file"] = args.inputFile;
     outputData["responses"] = nlohmann::json::array();
@@ -745,7 +751,7 @@ int main(int argc, char* argv[])
     std::string errorMessage = "TensorRT Edge LLM cannot handle this request. Fails.";
     size_t failedCount = 0;
 
-    // Process each request with progress indication
+    // handleRequest 内部会同步等待该 batch 在 stream 上完成；此处串行遍历多个 batch。
     LOG_INFO("Processing %zu batched requests...", batchedRequests.size());
     for (size_t requestIdx = 0; requestIdx < batchedRequests.size(); ++requestIdx)
     {
@@ -790,13 +796,11 @@ int main(int argc, char* argv[])
             LOG_ERROR("*** FAILED *** Request %zu failed to process!", requestIdx);
         }
 
-        // Add to JSON output with UTF-8 validation on output text
+        // 写出评测用 JSON：output_text 经 sanitizeUtf8ForJson，避免非法 UTF-8 字节序列导致 dump() 抛异常。
         for (size_t batchIdx = 0; batchIdx < request.requests.size(); ++batchIdx)
         {
             nlohmann::json responseJson;
             std::string outputText = requestStatus ? response.outputTexts[batchIdx] : errorMessage;
-            // Validate UTF-8 for output text (inputs are always valid)
-            // If invalid UTF-8 detected, error message is returned and original text is logged
             responseJson["output_text"] = sanitizeUtf8ForJson(outputText);
             responseJson["request_idx"] = requestIdx;
             responseJson["batch_idx"] = batchIdx;
@@ -845,9 +849,8 @@ int main(int argc, char* argv[])
 
     if (profilerEnabled)
     {
-        // Stop memory monitoring for examples
         setProfilingEnabled(false);
-        memoryMonitor.stop();
+        memoryMonitor.stop(); // join 异步 monitor 线程，冻结峰值 GPU/CPU 统计供 outputMemoryProfile 使用。
     }
 
     if (args.dumpProfile)

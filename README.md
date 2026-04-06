@@ -49,7 +49,7 @@ TensorRT Edge-LLM 是 NVIDIA 面向嵌入式平台的大型语言模型（LLM）
 
 ### 其他资源
 
-- **[示例目录](examples/)** — LLM 与 VLM 推理示例
+- **[示例目录](examples/)** — LLM、VLM 推理与精度评估相关示例；各子模块的**中文**构建说明、依赖与数据流见 [examples/README.md](examples/README.md)（其下 [llm](examples/llm/README.md)、[multimodal](examples/multimodal/README.md)、[utils](examples/utils/README.md)、[accuracy](examples/accuracy/README.md) 等子目录亦有独立说明；与上游英文对照可参阅 [accuracy 目录内 README_en.md](examples/accuracy/README_en.md) 等文件）。
 - **[测试](tests/)** — 贡献者可用的完整测试集
 
 ---
@@ -114,6 +114,14 @@ TensorRT Edge-LLM 是 NVIDIA 面向嵌入式平台的大型语言模型（LLM）
 ## 许可
 
 [Apache License 2.0](LICENSE)
+
+---
+
+## 仓库贡献与修改说明
+
+本 Git 仓库在保留上游 [NVIDIA/TensorRT-Edge-LLM](https://github.com/NVIDIA/TensorRT-Edge-LLM) 0.4.0 发行版结构与许可的前提下，对**学习与维护向**可读性做了增补，主要包括：`examples/` 下各示例子目录的**纯中文** [README.md](examples/README.md) 体系（含 CMake 目标说明、依赖关系与 **Mermaid** 数据流/架构图）、以及对部分示例 **C++/Python** 源码中与 **engine 文件**加载、激活缓存（Activation Buffer）、设备侧数据流相关段落的中文注释。上述增补**不替代**官方开发者指南；部署与排错请以 [文档](#文档) 中的开发者指南及上游仓库为准。
+
+**本仓库的中文文档重构、逻辑流程图绘制及深度代码注释，均由 Cursor 自动编程辅助生成。** 读者应结合源码与官方文档自行核对；发现错误或过时之处，欢迎通过本仓库 Issue 或 PR 反馈。
 
 ---
 

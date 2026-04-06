@@ -27,6 +27,10 @@
 
 using namespace trt_edgellm;
 
+// visual_build：仅负责视觉编码器（ViT 等）分支的 ONNX -> TensorRT engine 文件。
+// 运行期由 llm_inference 加载 multimodalEngineDir 下的该 engine，与文本 engine 协同完成 VLM 推理。
+// min/max ImageTokens 约束的是“图像在文本序列里展开成的 token 数”上界，需与 llm_build --vlm 侧参数一致，否则 shape 不匹配。
+
 // Enum for command line option IDs (using traditional enum for C library compatibility)
 enum VLMBuildOptionId : int
 {
@@ -157,7 +161,7 @@ int main(int argc, char** argv)
         gLogger.setLevel(nvinfer1::ILogger::Severity::kINFO);
     }
 
-    // Validate input directory and required files
+    // 与 llm_build 相同：依赖导出目录中的 config.json 描述视觉分支元数据。
     std::string configPath = args.onnxDir + "/config.json";
     std::ifstream configFile(configPath);
     if (!configFile.good())
@@ -167,7 +171,7 @@ int main(int argc, char** argv)
     }
     configFile.close();
 
-    // Create VisualBuilderConfig from args
+    // maxImageTokensPerImage 限制单张图展开的上限，须在 [minImageTokens, maxImageTokens] 内，避免 TensorRT profile 不可行。
     if (args.maxImageTokensPerImage < args.minImageTokens || args.maxImageTokensPerImage > args.maxImageTokens)
     {
         LOG_ERROR(
@@ -182,7 +186,7 @@ int main(int argc, char** argv)
     config.maxImageTokens = args.maxImageTokens;
     config.maxImageTokensPerImage = args.maxImageTokensPerImage;
 
-    // Create and run the builder
+    // VisualBuilder 内部完成视觉 ONNX 解析、TensorRT 构建与 engine 序列化。
     builder::VisualBuilder visualBuilder(args.onnxDir, args.engineDir, config);
     if (!visualBuilder.build())
     {

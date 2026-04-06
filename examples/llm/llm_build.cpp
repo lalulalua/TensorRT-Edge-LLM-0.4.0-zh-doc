@@ -28,6 +28,10 @@
 
 using namespace trt_edgellm;
 
+// 本文件实现 llm_build 可执行程序：从 ONNX 导出目录读取 config.json 与图结构，
+// 调用 edgellmBuilder 将网络编译为 TensorRT plan，并序列化写入 --engineDir 指定的目录（即“engine 文件”产物目录）。
+// maxInputLen / maxKVCacheCapacity / maxBatchSize 等参数在构建期固定进 engine，直接决定运行时可用的上下文上限与显存占用规模。
+
 // Enum for command line option IDs (using traditional enum for C library compatibility)
 enum LLMBuildOptionId : int
 {
@@ -57,7 +61,7 @@ struct LLMBuildArgs
     int64_t maxKVCacheCapacity{4096};
     bool debug{false};
     int64_t maxBatchSize{4};
-    int64_t maxLoraRank{0}; // Default to 0 means no LoRA
+    int64_t maxLoraRank{0}; // 0 表示构建的 engine 不包含动态 LoRA 槽位
     bool eagleDraft{false};
     bool eagleBase{false};
     int64_t maxVerifyTreeSize{60};
@@ -230,7 +234,7 @@ int main(int argc, char** argv)
         gLogger.setLevel(nvinfer1::ILogger::Severity::kINFO);
     }
 
-    // Validate input directory and required files
+    // 导出流水线会在 ONNX 旁写入 config.json；构建器据此恢复模型元数据（如词表、架构与 VLM 开关），缺失则无法对齐网络。
     std::string configPath = args.onnxDir + "/config.json";
     std::ifstream configFile(configPath);
     if (!configFile.good())
@@ -240,7 +244,7 @@ int main(int argc, char** argv)
     }
     configFile.close();
 
-    // Create LLMBuilderConfig from args
+    // 将 CLI 超参灌入 LLMBuilderConfig；后续 LLMBuilder 内部会据此设置 TensorRT profile、插件与 KV 相关上限。
     builder::LLMBuilderConfig config;
     config.maxInputLen = args.maxInputLen;
     config.maxKVCacheCapacity = args.maxKVCacheCapacity;
@@ -254,7 +258,7 @@ int main(int argc, char** argv)
     config.minImageTokens = args.minImageTokens;
     config.maxImageTokens = args.maxImageTokens;
 
-    // Create and run the builder
+    // ONNX 目录 -> 解析与优化 -> 序列化 engine 文件到 engineDir；失败时返回 false（常见原因：ONNX 与 TRT 版本不兼容、显存不足）。
     builder::LLMBuilder llmBuilder(args.onnxDir, args.engineDir, config);
     if (!llmBuilder.build())
     {

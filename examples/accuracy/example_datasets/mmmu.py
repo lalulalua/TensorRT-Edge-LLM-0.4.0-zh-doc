@@ -12,6 +12,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# 中文说明：MMMU/MMMU_Pro 多模态题；解码图像到 output_dir 并在 messages 中插入 image 路径，与视觉+文本双 engine 评测流程配套。
 
 import ast
 import os

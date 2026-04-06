@@ -12,6 +12,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# 中文说明：读取 llm_inference 写出的 predictions JSON 与 prepare_dataset 产出的 answers JSON，
+# 按条对齐 output_text 与标准答案；选择题会先 parse_multi_choice_response 再与 A–H 参考比对。
 
 import argparse
 import json
@@ -21,6 +24,7 @@ from collections import defaultdict
 
 def clean_text(text):
     """
+    去掉首尾空白与常见标点，并截断 phi4mm 等模型输出的 <|endoftext|> 之后内容。
     Clean and normalize text by stripping whitespace and removing punctuation from ends.
     Args:
         text: Input text string.

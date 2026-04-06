@@ -13,6 +13,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# 中文说明：把 llm_inference 的 JSON 预测与 VLMEvalKit 官方 TSV 元数据按题号对齐，生成可交给 VLMEvalKit run.py --mode eval 的 xlsx。
 """
 Prepare MMMU output xlsx file in VLMEvalKit format from JSON output.
 

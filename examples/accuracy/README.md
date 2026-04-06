@@ -1,275 +1,155 @@
-# Accuracy Benchmark for TensorRT Edge LLM
+# 精度与相似度评测（Python）
 
-This directory contains tools for running accuracy benchmarks on TensorRT Edge LLM models. Two types of benchmarks are supported: **Accuracy Tests** and **ROUGE Similarity Tests**.
+本目录提供在 TensorRT Edge-LLM **engine 文件**之上运行**准确率评测**与 **ROUGE 相似度评测**的工具链。与 `examples/llm`、`examples/multimodal` 不同，此处**没有** `CMakeLists.txt`，全部为 **Python 脚本**与数据集定义；请先按主工程文档完成 C++ 示例与 engine 构建。
 
-## Prerequisites
+**英文原文说明**（命令与附录更全）见同目录 [README_en.md](README_en.md)。
 
-Install required dependencies:
+---
+
+## 模块定位
+
+| 类型 | 说明 |
+|------|------|
+| 准确率评测 | 将模型预测与标准答案对比，支持 MMLU、MMLU_Pro、MMMU、MMMU_Pro 等（经 `prepare_dataset.py` 转为 Edge LLM JSON 格式）。 |
+| ROUGE 评测 | 以 vLLM 等生成参考回复，再与 TensorRT Edge-LLM 生成结果比对 ROUGE 指标。 |
+
+---
+
+## 环境与依赖
+
 ```bash
 pip install -r requirements.txt
 ```
 
-For ROUGE tests, also install vLLM:
+若运行 ROUGE 流程中的参考生成，另需安装 vLLM（体积与 CUDA 依赖较大，按需安装）：
+
 ```bash
 pip install vllm
 ```
 
-## Building TensorRT Engines
+评测脚本假设已在**工程根目录**构建出 `llm_build`、`llm_inference`、`visual_build` 等可执行文件；具体路径以 [README_en.md](README_en.md) 中的 `./build/examples/...` 为准。
 
-Build engines under the tensorrt_edgellm root directory. Use large sequence lengths (8192-10240) as accuracy datasets can be long.
+---
 
-### Text-only Models:
-```bash
-./build/examples/llm/llm_build \
-  --onnxDir /path/to/text/onnx/model/ \
-  --engineDir /path/to/text/engine/ \
-  --maxInputLen 8192 \
-  --maxKVCacheCapacity 10240 \
-  --maxBatchSize 1
+## 构建 engine 文件（与评测衔接）
+
+准确率数据集上下文较长，建议在构建文本 engine 时使用较大序列长度（如 8192–10240）。纯文本与多模态、以及 VLMEvalKit 对齐场景下的命令示例见 [README_en.md](README_en.md)；此处强调角色划分：
+
+- **文本 engine**：`llm_build`
+- **视觉 encoder engine**（多模态）：`visual_build`
+- **VLM 文本分支**：`llm_build` 需加 `--vlm` 及与视觉侧一致的 image token 范围参数
+
+---
+
+## 主流程：准确率评测
+
+```mermaid
+flowchart TB
+  subgraph prep [数据准备]
+    raw[原始评测集]
+    prepPy[prepare_dataset.py]
+    json[Edge LLM 格式 JSON]
+    raw --> prepPy
+    prepPy --> json
+  end
+
+  subgraph infer [推理]
+    engines[文本/多模态 engine 目录]
+    llmInf[llm_inference]
+    pred[预测 JSON]
+    json --> llmInf
+    engines --> llmInf
+    llmInf --> pred
+  end
+
+  subgraph score [打分]
+    calc[calculate_correctness.py]
+    metrics[准确率与分项统计]
+    pred --> calc
+    json --> calc
+    calc --> metrics
+  end
+
+  prep --> infer
+  infer --> score
 ```
 
-### Multimodal Models (MMMU, MMMU_Pro):
-Build both visual encoder and text engines:
+典型命令顺序（占位路径请替换为实际目录）：
 
-**Visual Encoder:**
-```bash
-./build/examples/multimodal/visual_build \
-  --onnxDir /path/to/visual/onnx/model/ \
-  --engineDir /path/to/visual/engine/ \
-  --minImageTokens 256 \
-  --maxImageTokens 8192
+1. `python3 scripts/prepare_dataset.py --dataset MMLU --output_dir ...`
+2. 在工程根目录执行 `./build/examples/llm/llm_inference`，指定 `--engineDir`、`--inputFile`、`--outputFile`；多模态另加 `--multimodalEngineDir` 等。
+3. `python3 scripts/calculate_correctness.py --predictions_file ... --answers_file ...`
+
+---
+
+## 子流程：ROUGE 相似度评测
+
+```mermaid
+flowchart TB
+  subgraph ref [参考生成]
+    vllm[vLLM / generate_reference.py]
+    refJson[参考回复 JSON]
+    vllm --> refJson
+  end
+
+  subgraph infer [TensorRT 推理]
+    eng[engine 文件]
+    llmInf[llm_inference]
+    predJson[预测 JSON]
+    eng --> llmInf
+    llmInf --> predJson
+  end
+
+  subgraph rouge [ROUGE]
+    rougePy[calculate_rouge_score.py]
+    scores[Rouge-1/2/L 等]
+    predJson --> rougePy
+    refJson --> rougePy
+    rougePy --> scores
+  end
+
+  ref --> rouge
+  infer --> rouge
 ```
 
-**Text Engine:**
-```bash
-./build/examples/llm/llm_build \
-  --onnxDir /path/to/text/onnx/model/ \
-  --engineDir /path/to/text/engine/ \
-  --maxInputLen 8192 \
-  --maxKVCacheCapacity 10240 \
-  --maxBatchSize 1 \
-  --vlm \
-  --minImageTokens 256 \
-  --maxImageTokens 8192
+---
+
+## 子流程：与 VLMEvalKit 对齐的 MMMU（可选）
+
+若需与 HuggingFace 生态中常见的 VLMEvalKit 评测协议对齐，需更长上下文与特定采样参数、以及将预测合并为 VLMEvalKit 所需 xlsx 等步骤。完整分步命令与 engine 超参建议见 [README_en.md](README_en.md) 附录；数据准备可使用 `prepare_dataset.py --dataset MMMU_VLMEvalkit` 与 `prepare_mmmu_vlmevalkit.py`。
+
+```mermaid
+flowchart LR
+  prepVk[prepare_dataset MMMU_VLMEvalkit]
+  buildVk[按附录调大 image/input 长度构建 engine]
+  runInf[llm_inference 大 maxGenerateLength]
+  merge[prepare_mmmu_vlmevalkit.py 合并 TSV 与 JSON]
+  vlmKit[VLMEvalKit run.py eval]
+
+  prepVk --> buildVk
+  buildVk --> runInf
+  runInf --> merge
+  merge --> vlmKit
 ```
 
-## Benchmark Types
+---
 
-### 1. Accuracy Tests
+## 目录与脚本索引
 
-Evaluate model predictions against ground truth answers. Supported datasets: **MMLU**, **MMLU_Pro**, **MMMU**, **MMMU_Pro**.
+| 路径 | 作用 |
+|------|------|
+| `scripts/prepare_dataset.py` | 将各数据集转为 Edge LLM JSON |
+| `scripts/calculate_correctness.py` | 准确率计算 |
+| `scripts/generate_reference.py` | vLLM 生成参考 |
+| `scripts/calculate_rouge_score.py` | ROUGE 打分 |
+| `scripts/prepare_mmmu_vlmevalkit.py` | VLMEvalKit 用 MMMU 输出整理 |
+| `example_datasets/*.py` | 各数据集加载与格式定义 |
+| `requirements.txt` | Python 依赖列表 |
 
-**Workflow:**
-```bash
-# 1. Convert dataset
-python3 scripts/prepare_dataset.py \
-  --dataset MMLU \
-  --output_dir /path/to/datasets/mmlu_output
+---
 
-# 2. Run inference (under tensorrt_edgellm root dir)
-./build/examples/llm/llm_inference \
-  --engineDir /path/to/engines/text_engine/ \
-  --multimodalEngineDir /path/to/multimodal/engine/ \  # For multimodal models
-  --inputFile /path/to/datasets/mmlu_output/mmlu_dataset.json \
-  --outputFile /path/to/outputs/mmlu_predictions.json
+## 注意事项摘要
 
-# 3. Calculate accuracy
-python3 scripts/calculate_correctness.py \
-  --predictions_file /path/to/outputs/mmlu_predictions.json \
-  --answers_file /path/to/datasets/mmlu_output/mmlu_dataset.json
-```
-
-### 2. ROUGE Similarity Tests
-
-Evaluate text generation quality using ROUGE metrics against reference responses.
-
-**Workflow:**
-```bash
-# 1. Generate references with vLLM
-python3 scripts/generate_reference.py \
-  --model <model_name_or_path> \
-  --input_file /path/to/dataset.json \
-  --output_file /path/to/references.json
-
-# 2. Run inference (under tensorrt_edgellm root dir)
-./build/examples/llm/llm_inference \
-  --engineDir /path/to/engine/ \
-  --inputFile /path/to/dataset.json \
-  --outputFile /path/to/predictions.json
-
-# 3. Calculate ROUGE scores
-python scripts/calculate_rouge_score.py \
-  --predictions_file /path/to/predictions.json \
-  --references_file /path/to/references.json
-```
-
-## Available Datasets
-
-Located in `example_datasets/` directory. Use `scripts/prepare_dataset.py` to convert datasets to Edge LLM format.
-
-### Text-Only Datasets
-
-**Multiple Choice & Knowledge:**
-- **MMLU** (`mmlu.py`): Massive Multitask Language Understanding
-- **MMLU_Pro** (`mmlu_pro.py`): Enhanced MMLU with more challenging questions
-
-**Math & Reasoning:**
-- **GSM8K** (`gsm8k.py`): Grade School Math 8K
-- **AIME** (`aime.py`): American Invitational Mathematics Examination 2024
-- **MATH-500** (`math500.py`): Mathematical reasoning problems
-- **HumanEval** (`humaneval.py`): Code completion benchmark
-
-**Conversational:**
-- **MTBench** (`mtbench.py`): Multi-Turn Benchmark
-
-### Multimodal Datasets
-
-**Vision + Language:**
-- **MMMU** (`mmmu.py`): Massive Multi-discipline Multimodal Understanding
-- **MMMU_Pro** (`mmmu.py`): Enhanced version of MMMU
-- **MMStar** (`mmstar.py`): Multimodal benchmark with visual reasoning
-
-### Framework
-- **EdgeLLM Dataset** (`edgellm_dataset.py`): Base class for custom dataset implementations
-
-## Scripts
-
-- **`prepare_dataset.py`**: Convert datasets to Edge LLM format
-- **`calculate_correctness.py`**: Calculate accuracy scores for multiple choice datasets
-- **`generate_reference.py`**: Generate reference responses using vLLM
-- **`calculate_rouge_score.py`**: Calculate ROUGE similarity scores
-
-## Output Metrics
-
-- **Accuracy Tests**: Overall accuracy percentage, subject-specific accuracy, detailed statistics
-- **ROUGE Tests**: Rouge-1, Rouge-2, Rouge-L, Rouge-Lsum scores
-
-## Important Notes
-
-- **Engine Building**: Use `llm_build` for text engines, `visual_build` for visual encoders
-- **Sequence Lengths**: Use large values (8192-10240) for accuracy datasets
-- **Multimodal Models**: Build both engines, use `--vlm` flag and `--multimodalEngineDir` parameter
-- **Dataset Format**: All inputs must be in Edge LLM JSON format
-- **Binary Location**: Run inference binaries from tensorrt_edgellm root directory
-
-## Appendix: Reproducing HuggingFace MMMU Benchmark with VLMEvalKit
-
-The default **MMMU** dataset (`mmmu.py`) uses the [MMMU-Benchmark](https://github.com/MMMU-Benchmark/MMMU) prompt format, expecting short outputs with option letters directly (e.g., "A", "B", "C", "D").
-
-Most HuggingFace VLM models report official MMMU scores using [VLMEvalKit](https://github.com/open-compass/VLMEvalKit). This framework uses long-form generation with reasoning and evaluates via OpenAI API (e.g., GPT-3.5). It achieves higher scores but requires longer inference and evaluation time.
-
-### 1. Check VLMEvalKit Inference Configurations
-
-Model repositories may provide benchmark configurations. For example, see [Qwen3-VL/evaluation/mmmu](https://github.com/QwenLM/Qwen3-VL/tree/main/evaluation/mmmu).
-
-For default configurations, refer to VLMEvalKit's [`config.py`](https://github.com/open-compass/VLMEvalKit/blob/main/vlmeval/config.py):
-```python
-"Qwen3-VL-4B-Instruct": partial(
-    Qwen3VLChat,
-    model_path="Qwen/Qwen3-VL-4B-Instruct",
-    use_custom_prompt=False,
-    use_vllm=True,
-    temperature=0.7, 
-    max_new_tokens=16384,
-    repetition_penalty=1.0,
-    presence_penalty=1.5,
-    top_p=0.8,
-    top_k=20
-),
-```
-
-### 2. Prepare MMMU Dataset (VLMEvalKit Format)
-
-```bash
-python3 scripts/prepare_dataset.py \
-  --dataset MMMU_VLMEvalkit \
-  --output_dir /path/to/datasets/mmmu_vlmevalkit \
-  --top_p 0.8 --top_k 20 --temperature 0.7
-```
-
-### 3. Building TensorRT Engines
-
-VLMEvalKit requires larger image sizes, input lengths, and output lengths than default settings. For example, [Qwen3-VL](https://github.com/QwenLM/Qwen3-VL/issues/1617#issuecomment-3421734724) uses MIN_PIXELS=1,003,520 and MAX_PIXELS=4,014,080, translating to 980–3920 tokens per image. With up to 5 images per MMMU input: `maxImageTokens` = 3920 × 5 = 19600.
-
-**Visual Encoder:**
-```bash
-./build/examples/multimodal/visual_build \
-  --onnxDir /path/to/visual/onnx/model/ \
-  --engineDir /path/to/visual/engine/ \
-  --minImageTokens 980 \
-  --maxImageTokens 19600 \
-  --maxImageTokensPerImage 3920
-```
-
-**Text Engine:**
-```bash
-./build/examples/llm/llm_build \
-  --onnxDir /path/to/text/onnx/model/ \
-  --engineDir /path/to/text/engine/ \
-  --maxInputLen 21000 \
-  --maxKVCacheCapacity 30000 \
-  --maxBatchSize 1 \
-  --vlm \
-  --minImageTokens 980 \
-  --maxImageTokens 19600
-```
-
-### 4. Run Inference
-
-**Inference:**
-```bash
-./build/examples/llm/llm_inference \
-  --engineDir /path/to/text/engine/ \
-  --multimodalEngineDir /path/to/visual/engine/ \
-  --inputFile /path/to/datasets/mmmu_vlmevalkit/mmmu_dataset.json \
-  --outputFile /path/to/outputs/mmmu_predictions.json \
-  --batchSize 1 \
-  --maxGenerateLength 8192
-```
-
-**Prepare Output:**
-
-Download VLMEvalKit MMMU metadata file:
-```bash
-wget https://opencompass.openxlab.space/utils/VLMEval/MMMU_DEV_VAL.tsv
-```
-
-Combine the TSV metadata with JSON predictions to create the xlsx file for VLMEvalKit:
-```bash
-python3 scripts/prepare_mmmu_vlmevalkit.py \
-  --tsv_file /path/to/MMMU_DEV_VAL.tsv \
-  --json_file /path/to/outputs/mmmu_predictions.json \
-  --output_file /path/to/outputs/${Model}_MMMU_DEV_VAL.xlsx 
-```
-
-### 5. Evaluate with VLMEvalKit
-
-Download and install [VLMEvalKit](https://github.com/open-compass/VLMEvalKit). Refer to the official [documentation](https://github.com/open-compass/VLMEvalKit/blob/main/docs/en/Quickstart.md) for setup instructions and usage.
-
-**Evaluate TensorRT Edge LLM output:**
-
-Run in eval-only mode. VLMEvalKit reads `${Model}_MMMU_DEV_VAL.xlsx` from `--work-dir` and outputs accuracy scores (`_acc.xlsx`) and evaluation results (`_results.xlsx`):
-```bash
-cd /path/to/VLMEvalKit
-
-python3 run.py \
-  --data MMMU_DEV_VAL \
-  --model ${Model} \
-  --work-dir /path/to/outputs \
-  --mode eval \
-  --verbose \
-  --reuse
-```
-
-**(Optional) Verify PyTorch Baseline:**
-
-Compare TensorRT Edge LLM results against PyTorch/vLLM baseline using VLMEvalKit with the same configuration.
-
-```bash
-python3 run.py \
-  --data MMMU_DEV_VAL \
-  --model ${Model} \
-  --work-dir /path/to/outputs \
-  --mode all \
-  --verbose
-```
+- 推理二进制建议在**工程根目录**下调用，以便相对路径与文档一致。
+- 多模态需同时构建视觉与文本 engine，推理时传入 `--multimodalEngineDir` 等参数。
+- 所有送入 `llm_inference` 的批量输入须为 **Edge LLM JSON 格式**。

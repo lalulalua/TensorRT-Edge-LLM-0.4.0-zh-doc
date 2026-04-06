@@ -12,6 +12,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# 中文说明：EdgeLLMDataset 把 datasets.Dataset 中的样本批量格式化为 messages 列表，
+# 并写出顶层 meta（temperature、top_p、top_k、max_generate_length、batch_size），
+# 与 examples/llm/INPUT_FORMAT.md 及 C++ parseInputFile 约定一致；多模态子类会处理图像落盘与路径引用。
 """
 Base class for formatting datasets for TensorRT Edge-LLM inference.
 

@@ -21,10 +21,9 @@
 #include <future>
 #include <thread>
 
-//! Memory monitor for examples
-//! Automatically detects iGPU vs dGPU on start() and adjusts monitoring accordingly:
-//! - iGPU: Monitors unified memory using CPU memory (RSS)
-//! - dGPU: Monitors both GPU memory and CPU memory
+//! 示例程序用显存/内存观测器：在 start() 时区分集成 GPU（iGPU）与独立 GPU（dGPU），统计策略不同。
+//! - dGPU：后台线程周期性 cudaMemGetInfo，用“起始空闲显存 − 当前空闲显存”近似进程峰值 GPU 占用（若其他进程释放显存则可能低估，代码已用下溢保护）。
+//! - iGPU：统一内存架构下不启动该轮询线程；峰值统一内存通过 getrusage(RUSAGE_SELF) 的 RSS 在查询时反映（与 dGPU 的 CPU 峰值统计方式一致）。
 class MemoryMonitor
 {
 public:

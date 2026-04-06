@@ -37,7 +37,9 @@ using namespace trt_edgellm;
 namespace
 {
 
-//! Utility function for calculating prefill tokens per second
+// 以下 get* 辅助函数统一从 gTimer 取对应 Stage 的总 GPU 时间与 metrics 中的 token 计数做除法，得到吞吐与每 token 耗时。
+
+//! Prefill 阶段：总 token = reusedTokens + computedTokens（复用 KV 的 token 不计入算力但仍占序列位置）。
 float getPrefillTokensPerSecond(metrics::LLMPrefillMetrics const& prefillMetrics)
 {
     auto timingData = gTimer.getTimingData(metrics::StageNames::kLLM_PREFILL);
@@ -319,7 +321,7 @@ void outputMemoryProfile(std::ostream& output, MemoryMonitor const& memoryMonito
 
     if (memoryMonitor.isIntegratedGPU())
     {
-        // iGPU: Only show unified memory
+        // iGPU：打印 RSS 推导的峰值统一内存（与 MemoryMonitor 实现一致）。
         size_t peakUnifiedMemoryBytes = memoryMonitor.getPeakUnifiedMemory();
         output << "Peak Unified Memory: " << std::fixed << std::setprecision(2)
                << rt::utils::toMB(peakUnifiedMemoryBytes) << " MB (" << peakUnifiedMemoryBytes << " bytes)"
@@ -327,7 +329,7 @@ void outputMemoryProfile(std::ostream& output, MemoryMonitor const& memoryMonito
     }
     else
     {
-        // dGPU: Show both GPU and CPU memory
+        // dGPU：异步采样得到的峰值 GPU 增量 + 进程 RSS 峰值。
         size_t peakGpuMemoryBytes = memoryMonitor.getPeakGpuMemory();
         size_t peakCpuMemoryBytes = memoryMonitor.getPeakCpuMemory();
         output << "Peak GPU Memory: " << std::fixed << std::setprecision(2) << rt::utils::toMB(peakGpuMemoryBytes)

@@ -12,6 +12,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# 中文说明（示例流水线）：根据 --dataset 选择对应的 convert_* 函数，把 HuggingFace Dataset 或本地目录
+# 转为 llm_inference 可读的 JSON（含 requests、batch_size、采样与 max_generate_length 等顶层字段）。
+# 输出目录中的 JSON 即 C++ 侧 parseInputFile 的输入；多模态条目会把图像落盘并在 messages 里写路径。
 """
 Dataset preparation script for TensorRT Edge-LLM.
 
@@ -34,7 +38,7 @@ import argparse
 import os
 import sys
 
-# Add the parent directory to the Python path to import example_datasets
+# 将 accuracy 根目录加入 path，以便导入 example_datasets 包（与脚本所在 scripts/ 的相对关系固定）。
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from example_datasets.aime import convert_aime_dataset

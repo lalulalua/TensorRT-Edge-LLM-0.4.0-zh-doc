@@ -12,6 +12,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# 中文说明：将 MMLU 选择题转为 Edge LLM JSON；每条样本含 role/messages 与选项字母答案，供 llm_inference 单 token 生成评测。
 
 import os
 import sys

@@ -29,7 +29,7 @@ using namespace trt_edgellm;
 
 namespace
 {
-//! Get current GPU free and total memory
+//! 查询当前设备全局空闲/总显存；用于 dGPU 下估算本进程相对基线的增量占用。
 std::pair<size_t, size_t> getGpuMemoryInfo()
 {
     size_t freeMem, totalMem;
@@ -37,7 +37,7 @@ std::pair<size_t, size_t> getGpuMemoryInfo()
     return {freeMem, totalMem};
 }
 
-//! Check if the current CUDA device is an integrated GPU (iGPU)
+//! cudaDevAttrIntegrated：Jetson 等平台上为 1，桌面独显一般为 0。
 bool detectIntegratedGPU()
 {
     int device{-1};
@@ -56,17 +56,17 @@ void MemoryMonitor::start()
         mTask.get();
     }
 
-    // Detect device type
     mIsIGPU = detectIntegratedGPU();
     mPeakGpuMemory = 0;
 
     if (mIsIGPU)
     {
+        // 统一内存：不在此启动异步轮询；后续 getPeakUnifiedMemory() 走 RSS，与 outputMemoryProfile 的 iGPU 分支一致。
         LOG_INFO("Memory Monitor Started - iGPU detected, monitoring unified memory through RSS");
     }
     else
     {
-        // Initialize GPU memory baseline for dGPU
+        // 记录 monitor 开始瞬间的 GPU 空闲量作为基线，后续用 (baselineFree - currentFree) 更新 mPeakGpuMemory。
         auto [freeMem, totalMem] = getGpuMemoryInfo();
         mBaselineGpuFreeMemory = freeMem;
 
@@ -78,6 +78,7 @@ void MemoryMonitor::start()
             gpuFreeMemMB, gpuTotalMemMB);
 
         mActive = true;
+        // 异步轮询避免阻塞主线程；周期 50ms，在 profile 结束 stop() 时 join。
         mTask = std::async(std::launch::async, [this]() { monitor(); });
     }
 }
@@ -117,10 +118,9 @@ void MemoryMonitor::monitor()
 {
     while (mActive.load())
     {
-        // Monitor GPU memory
         auto [currentFreeMem, totalMem] = getGpuMemoryInfo();
-        // Peak GPU memory is the difference between baseline free memory and current free memory
-        // Protect against underflow if other processes free GPU memory
+        // 空闲显存变少即认为本进程（及同设备上其他进程）占用了更多；示例场景下通常以本进程为主。
+        // 若其他进程释放显存导致 currentFree > baseline，则本次样本记 0，避免 size_t 下溢。
         size_t gpuMemoryUsed = (currentFreeMem < mBaselineGpuFreeMemory) ? mBaselineGpuFreeMemory - currentFreeMem : 0;
         if (mPeakGpuMemory < gpuMemoryUsed)
         {

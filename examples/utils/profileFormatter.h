@@ -17,6 +17,10 @@
 
 #pragma once
 
+// 将运行时采集的 metrics::LLMPrefillMetrics / LLMGenerationMetrics 等与全局 gTimer 中的 GPU 耗时对齐，
+// 输出人类可读的统计行或写入 JSON（与 llm_inference 的 --dumpProfile / --profileOutputFile 配套）。
+// sanitizeUtf8ForJson 保证 tokenizer 解码出的非法 UTF-8 不会导致 nlohmann::json 序列化崩溃。
+
 #include "memoryMonitor.h"
 #include "profiling/metrics.h"
 #include <nlohmann/json.hpp>

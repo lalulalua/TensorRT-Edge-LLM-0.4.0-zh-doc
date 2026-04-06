@@ -12,6 +12,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# 中文说明：用 vLLM 在 GPU 上跑 PyTorch 参考模型，为 ROUGE 评测生成 references JSON；
+# 输入格式与 Edge LLM 评测集一致，脚本内构造 LLM.generate 请求并把结果写回磁盘。
 
 import argparse
 import base64
@@ -42,7 +45,7 @@ def encode_image_to_base64(image_path):
 
 
 def main(args):
-    # Pop arguments for script logic
+    # 从 CLI 取模型与路径；后续用 vLLM 批量生成与 TensorRT 侧同分布的参考文本。
     model = args.model
     input_file = args.input_file
     output_file = args.output_file

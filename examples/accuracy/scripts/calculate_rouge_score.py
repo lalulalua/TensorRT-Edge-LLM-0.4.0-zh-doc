@@ -12,6 +12,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# 中文说明：对 predictions/references 两份 JSON 的 responses 列表逐条取 output_text，
+# 跳过推理失败占位串，调用 HuggingFace evaluate 的 rouge 指标得到 R1/R2/RL 等。
 
 import argparse
 import json
