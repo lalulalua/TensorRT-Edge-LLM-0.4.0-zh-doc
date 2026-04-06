@@ -15,6 +15,9 @@
  * limitations under the License.
  */
 
+// 中文运行时注释（Tier B）：本文件实现标准（非 Eagle）路径下单次请求的 prefill → 自回归 decode → 采样闭环；
+// TensorRT enqueueV3、KV 线性缓冲与设备侧序列长度提交详见 LLMEngineRunner / LinearKVCache。
+
 #include "llmInferenceRuntime.h"
 
 #include "common/bindingNames.h"
@@ -70,6 +73,7 @@ LLMInferenceRuntime::LLMInferenceRuntime(std::string const& engineDir, std::stri
 
     mEngineConfig = mLLMEngineRunner->getEngineConfig();
 
+    // 按「最费工作区」的采样配置预留 GPU 字节缓冲；实际请求可用更小 top_p/top_k，但不会超过此上界。
     // Use TopP sampling parameter to reserve max possible workspace size for sampling.
     int32_t const defaultTopK{0};
     float const defaultTopP{0.9F};
@@ -78,18 +82,20 @@ LLMInferenceRuntime::LLMInferenceRuntime(std::string const& engineDir, std::stri
     int64_t maxSamplingWorkspaceSize = static_cast<int64_t>(trt_edgellm::getTopKtopPSamplingWorkspaceSize(
         mEngineConfig.maxSupportedBatchSize, mEngineConfig.outputVocabSize, samplingParams));
 
-    // Allocate workspace and activation tensors for LLM engine.
     try
     {
-        // Use Int8 to indicate byte for workspace.
+        // mSamplingWorkspace：topK/topP 等采样 kernel 的临时显存（按字节计，类型 kINT8 仅作占位）。
         mSamplingWorkspace = rt::Tensor({maxSamplingWorkspaceSize}, rt::DeviceType::kGPU, DataType::kINT8,
             "LLMInferenceRuntime::mSamplingWorkspace");
+        // mInputIds：Prefill 阶段 [B, T_pad]，Decode 阶段 reshape 为 [B, 1]；T 上限为构建 engine 时的 maxSupportedInputLength。
         mInputIds = rt::Tensor({mEngineConfig.maxSupportedBatchSize, mEngineConfig.maxSupportedInputLength},
             rt::DeviceType::kGPU, DataType::kINT32, "LLMInferenceRuntime::mInputIds");
         mHostPackedInputIds = rt::Tensor({mEngineConfig.maxSupportedBatchSize, mEngineConfig.maxSupportedInputLength},
             rt::DeviceType::kCPU, DataType::kINT32, "LLMInferenceRuntime::mHostPackedInputIds");
+        // mOutputLogits：每步最后一 token 的 logits，典型 shape [B, vocabSize]（或 reduced vocab 后再映射）。
         mOutputLogits = rt::Tensor({mEngineConfig.maxSupportedBatchSize, mEngineConfig.vocabSize}, rt::DeviceType::kGPU,
             DataType::kFLOAT, "LLMInferenceRuntime::mOutputLogits");
+        // mSelectedIndices：GPU 上采样得到的当前步 token 下标，shape [B, 1]，同时作为 decode 步的 inputIds。
         mSelectedIndices = rt::Tensor({mEngineConfig.maxSupportedBatchSize, 1}, rt::DeviceType::kGPU, DataType::kINT32,
             "LLMInferenceRuntime::mSelectedIndices");
         mHostSelectedTokenIds = rt::Tensor({mEngineConfig.maxSupportedBatchSize}, rt::DeviceType::kCPU,
@@ -189,6 +195,12 @@ bool LLMInferenceRuntime::examineRequest(LLMGenerationRequest const& request)
     return true;
 }
 
+/**
+ * @desc: Prefill 前准备：处理 system prompt KV 前缀复用、将变长 token 序列 pack/pad 到本 batch 统一长度，重置 LinearKVCache 设备状态并把 inputIds/contextLengths 拷到 GPU，可选切换 LoRA。
+ * @params: batchedInputIds — 每条样本一行 token id（已含模板后完整 prompt）；systemPrompts — 与 batch 对齐的 system 文本用于查哈希缓存；loraWeightsName — 当前 batch 逻辑名；stream — 异步 memcpy/kernel 所在 CUDA stream
+ * @return: false 表示超长输入、LoRA 切换失败等；成功时 mInputIds/mHostContextLengths 已与 runner 约定一致
+ * @others: 非环形 KV：显存块固定为 maxSequenceLength（见 LinearKVCache），「写到哪里」由引擎插件结合 KVCacheLengths 决定；本函数不调用 enqueueV3。
+ */
 bool LLMInferenceRuntime::setUpForPrefillExecution(std::vector<std::vector<int32_t>> const& batchedInputIds,
     std::vector<std::string> const& systemPrompts, std::string const& loraWeightsName, cudaStream_t stream)
 {
@@ -199,12 +211,11 @@ bool LLMInferenceRuntime::setUpForPrefillExecution(std::vector<std::vector<int32
     rt::LinearKVCache& linearKVCache = mLLMEngineRunner->getLinearKVCache();
     rt::Tensor kvCacheBuffer = linearKVCache.getKVCacheBuffer();
 
-    // Record the length of the reused KVCache for each sequence using pre-allocated tensor
+    // 记录每条序列已从「缓存的 system KV」复用的 token 长度；后续 resetForNewSequences 据此初始化设备侧 KV 长度张量。
     mHostReuseKVCacheLengths.reshape({activeBatchSize});
     int32_t* reuseKVCacheLengthsData = mHostReuseKVCacheLengths.dataPointer<int32_t>();
 
-    // Search if the system prompt has been cached. If there are cached system prompts, insert
-    // the pre-computed KVCache and remove the contents from inputIds.
+    // 若命中 system prompt 缓存：把保存的 KV 块拷回全局 KV 大缓冲的 batch 行 i，并从 inputIds 前部去掉已缓存长度的 token，仅对剩余段做 prefill。
     for (int32_t i = 0; i < activeBatchSize; ++i)
     {
         auto promptHash = hashSystemPromptWithLoraWeights(systemPrompts[i], loraWeightsName);
@@ -238,7 +249,7 @@ bool LLMInferenceRuntime::setUpForPrefillExecution(std::vector<std::vector<int32
         }
     }
 
-    // Pack inputIds, instantiate input data for prefill step, and reset the KVCache state.
+    // 本 batch 内按最长有效 token 数对齐；每条样本右侧 pad 到同一 T_pad（且不小于引擎 minSupportedInputLength）。
     int32_t const maxInputLength = *std::max_element(processedIdsLengths.begin(), processedIdsLengths.end());
     if (maxInputLength > mEngineConfig.maxSupportedInputLength)
     {
@@ -249,21 +260,20 @@ bool LLMInferenceRuntime::setUpForPrefillExecution(std::vector<std::vector<int32
         return false;
     }
 
-    // The LLM Engine could also have minSupportedInputLength constraint.
     int32_t const packedInputLength = std::max(maxInputLength, mEngineConfig.minSupportedInputLength);
 
-    // Reshape and fill the pre-allocated pinned host tensor with pad tokens
+    // Host 侧先整表填 pad_id，再逐行 copy 真实 token；随后异步 H2D 到 mInputIds，避免在 GPU 上逐元素填 pad。
     mHostPackedInputIds.reshape({activeBatchSize, packedInputLength});
     int32_t* packedInputIdsData = mHostPackedInputIds.dataPointer<int32_t>();
     std::fill(packedInputIdsData, packedInputIdsData + activeBatchSize * packedInputLength, mTokenizer->getPadId());
 
     for (int32_t i = 0; i < activeBatchSize; ++i)
     {
-        // Pad each sequence to the max length of this batch.
-        // TODO: Implement remove input padding for better efficiency until multi-batch.
+        // TODO: 可改为去除 padding 的变长 kernel 以省算力；当前实现为简单右对齐 pad。
         std::copy(processedInputIds[i].begin(), processedInputIds[i].end(), packedInputIdsData + i * packedInputLength);
     }
 
+    // 把复用长度拷到 GPU KV 长度张量并标记 mKVCacheAllEmpty；不清空整块 KV 显存，由插件按长度解释有效区。
     linearKVCache.resetForNewSequences(mHostReuseKVCacheLengths, stream);
     mInputIds.reshape({activeBatchSize, packedInputLength});
     mHostContextLengths.reshape({activeBatchSize});
@@ -271,6 +281,7 @@ bool LLMInferenceRuntime::setUpForPrefillExecution(std::vector<std::vector<int32
 
     CUDA_CHECK(cudaMemcpyAsync(mInputIds.rawPointer(), mHostPackedInputIds.rawPointer(),
         activeBatchSize * packedInputLength * sizeof(int32_t), cudaMemcpyHostToDevice, stream));
+    // contextLengths 为每条序列「本步实际 token 数」（非 pad 后总长时可小于 packedInputLength），供引擎写 KV 有效长度。
     memcpy(mHostContextLengths.dataPointer<int32_t>(), processedIdsLengths.data(), activeBatchSize * sizeof(int32_t));
 
     if (mEngineConfig.maxSupportedLoraRank > 0 && !mLLMEngineRunner->switchLoraWeights(loraWeightsName, stream))
@@ -282,6 +293,12 @@ bool LLMInferenceRuntime::setUpForPrefillExecution(std::vector<std::vector<int32
     return true;
 }
 
+/**
+ * @desc: 端到端处理一个 LLMGenerationRequest：模板 → token 化 →（可选）多模态视觉特征 → setUpForPrefill → executePrefillStep → 每步 GPU 采样 + executeVanillaDecodingStep 直至 EOS 或达到 max_generate_length。
+ * @params: request — 含 messages、采样温度/top_p/top_k、maxGenerateLength 等；response — 输出 token 与 decode 文本；stream — 与示例进程共用的 CUDA stream
+ * @return: 是否全程成功；失败时 response 可能部分未填
+ * @others: Prefill 后 `mInputIds` reshape 为 [B,1] 进入 decode；采样在 `topKtopPSamplingFromLogits`（GPU）后 **cudaStreamSynchronize** 再读 Host 更新 EOS 状态。KV 指针「滑动」由引擎内部按 commit 后的长度字段写入线性缓冲，非本文件维护下标。
+ */
 bool LLMInferenceRuntime::handleRequest(
     LLMGenerationRequest const& request, LLMGenerationResponse& response, cudaStream_t stream)
 {
@@ -355,8 +372,6 @@ bool LLMInferenceRuntime::handleRequest(
         }
     }
 
-    // Conduct the preparation work to handle a new set of sequences, including inputIds packing, input/output tensor
-    // preparation, reset the KVCache state, and apply reused prefix KVCache if available.
     if (!setUpForPrefillExecution(batchedInputIds, batchSystemPrompts, loraWeightsName, stream))
     {
         LOG_ERROR("LLMInferenceRuntime(): Prefill execution setup failed. This request cannot be handled.");
@@ -366,6 +381,7 @@ bool LLMInferenceRuntime::handleRequest(
     // Record context information for performance tracking
     auto tokenCount = calculateTokenCounts(batchedInputIds, batchSystemPrompts, loraWeightsName);
 
+    // maxKVCacheCapacity 来自构建 engine 时的序列容量；input+生成超过则截断生成步数，避免 KV 线性缓冲越界。
     int32_t const maxInputIdsLength = mInputIds.getShape()[1];
     int32_t maxGenerationLength = request.maxGenerateLength;
     if (maxInputIdsLength + maxGenerationLength > mEngineConfig.maxKVCacheCapacity)
@@ -378,8 +394,6 @@ bool LLMInferenceRuntime::handleRequest(
             mEngineConfig.maxKVCacheCapacity, maxGenerationLength);
     }
 
-    // Set up data structures to store the generated results during decoding.
-    // Also set up sampling parameters and sampling lambda function.
     int32_t unFinishedBatchNum = activeBatchSize;
     int32_t generationIter{0};
     std::vector<std::vector<int32_t>> outputIds(activeBatchSize);
@@ -390,15 +404,16 @@ bool LLMInferenceRuntime::handleRequest(
 
     SamplingParams params(
         activeBatchSize, mEngineConfig.outputVocabSize, request.temperature, request.topK, request.topP);
+    // 闭包：在 GPU 上对 mOutputLogits 做温度缩放 + topK/topP 截断与采样（实现见 sampler 模块），再 D2H 取 token id 并更新 EOS。
     auto sampleTokens = [&]() {
         trt_edgellm::topKtopPSamplingFromLogits(mOutputLogits, mSelectedIndices, params, mSamplingWorkspace, stream);
-        // Apply vocabulary mapping if reduced vocabulary is used
         if (mEngineConfig.reducedVocabSize > 0)
         {
             trt_edgellm::mapReducedVocabToFullVocab(mSelectedIndices, mVocabMappingTable, stream);
         }
         CUDA_CHECK(cudaMemcpyAsync(mHostSelectedTokenIds.rawPointer(), mSelectedIndices.rawPointer(),
             activeBatchSize * sizeof(int32_t), cudaMemcpyDeviceToHost, stream));
+        // 必须同步：后续在 CPU 上读 hostSelectedTokenIds 并判断 EOS；prefill 后首 token 与每 decode 步各调用一次。
         CUDA_CHECK(cudaStreamSynchronize(stream));
         for (int32_t i = 0; i < activeBatchSize; ++i)
         {
@@ -422,13 +437,11 @@ bool LLMInferenceRuntime::handleRequest(
     rt::OptionalInputTensors extraVisualFeatures
         = mMultimodalRunner ? mMultimodalRunner->getExtraVisualFeatures() : rt::OptionalInputTensors{};
 
-    // Profile all sampling operations as one stage
-    // Prefill profiling session
-    // For non-spec decode, we don't need to output hidden states.
     rt::OptionalOutputTensor outputHiddenStates{std::nullopt};
     {
         TIME_STAGE(metrics::StageNames::kLLM_PREFILL, stream);
 
+        // 一次 enqueueV3：处理整段 prompt token，向 KV 缓冲写入 prefill 阶段 K/V；commit 后设备侧序列长度更新。
         bool prefillStatus = mLLMEngineRunner->executePrefillStep(mInputIds, mHostContextLengths, multimodalEmbeddings,
             extraVisualFeatures, mOutputLogits, outputHiddenStates, stream);
         if (!prefillStatus)
@@ -443,16 +456,15 @@ bool LLMInferenceRuntime::handleRequest(
     // Record prefill metrics
     mPrefillMetrics.recordRun(tokenCount.totalReusedTokens, tokenCount.totalComputedTokens);
 
-    // Reshape inputIds for decoding step
+    // 将 mInputIds 收束为 [B,1] 形态以符合引擎 decode profile；实际每步传入 executeVanillaDecodingStep 的是上一步采样得到的 mSelectedIndices（同为 [B,1]）。
     mInputIds.reshape({activeBatchSize, 1});
 
-    // Profile entire generation phase like benchmark profiler
     {
         TIME_STAGE(metrics::StageNames::kLLM_GENERATION, stream);
 
         while (unFinishedBatchNum > 0 && generationIter < maxGenerationLength)
         {
-            // Use the selected token indices as the input token indices for the decoding step.
+            // enqueueV3（或已捕获的 CUDA Graph）一步：在已有 KV 上追加 1 token，更新 logits；内部 commit 使 KV 长度 +1。
             bool decodingStatus = mLLMEngineRunner->executeVanillaDecodingStep(mSelectedIndices, mOutputLogits, stream);
             if (!decodingStatus)
             {
@@ -488,6 +500,12 @@ bool LLMInferenceRuntime::handleRequest(
     return true;
 }
 
+/**
+ * @desc: 为各 batch 规模（及每套 LoRA）预捕获 decode 步 CUDA Graph，使重复执行时走 cudaGraphLaunch 而非逐次 setTensor+enqueueV3。
+ * @params: stream — 捕获与 launch 使用的流
+ * @return: 是否全部捕获成功（部分失败仍返回 false，但运行时可能回退动态路径）
+ * @others: 捕获顺序与形状须与实际 decode 一致；见 LLMEngineRunner::executeVanillaDecodingStep 内 graph 分支。
+ */
 bool LLMInferenceRuntime::captureDecodingCUDAGraph(cudaStream_t stream)
 {
     int32_t const maxSupportedBatchSize = mEngineConfig.maxSupportedBatchSize;
@@ -608,7 +626,7 @@ bool LLMInferenceRuntime::genAndSaveSystemPromptKVCache(
         return false;
     }
 
-    // Copy out the KVCache content from the prefill step.
+    // 从全局线性 KV 大缓冲中切出 batch 0、长度 promptIdsLength 的块拷入独立 Tensor，供下次 instantiateKVCacheFromTensor 恢复。
     auto& linearKVCache = mLLMEngineRunner->getLinearKVCache();
     auto cacheConfig = linearKVCache.getConfig();
     auto kvCacheBuffer = linearKVCache.getKVCacheBuffer();

@@ -43,6 +43,9 @@ struct SystemPromptKVCache
 
 /*! \brief LLM Inference Runtime for handling generation requests
  */
+//
+// 中文（Tier B）：在 handleRequest 内串联 pack/pad → prefill（runner + KV 长度提交）→ GPU 采样 → decode 循环；
+// KV 为 LinearKVCache 线性缓冲，非环形；TensorRT I/O 与 enqueueV3 细节见 llmEngineRunner.cpp。
 class LLMInferenceRuntime
 {
 public:

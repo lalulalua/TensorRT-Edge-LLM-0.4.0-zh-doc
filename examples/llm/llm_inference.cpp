@@ -42,10 +42,17 @@ using namespace trt_edgellm;
 using Json = nlohmann::json;
 
 /**
- * @desc: 与 getopt_long 配套的 CLI 选项数值 ID（自 900 起避免与单字符短选项冲突）。
+ * @desc: llm_inference 示例进程：将磁盘 JSON 请求转为 `rt::LLMGenerationRequest`，加载 TensorRT 插件与 engine 文件，经 `cudaStream_t` 调用 `handleRequest`，并把文本结果与可选 profile 写回 JSON。不包含 Prefill/Decode 内核、KV 张量布局或 Top-K/Top-P 数学实现（见 `cpp/runtime/llmInferenceRuntime.cpp` 与 `.cursor/TIER_B_LLM_RUNTIME_ANNOTATION.md`）。
+ * @params: 无（翻译单元级说明）
+ * @return: 无
+ * @others: 所有设备侧张量 shape 由 engine 构建期 profile 与运行时 runner 决定；本文件仅传递标量超参（temperature/top_p/top_k/max_generate_length）与路径字符串。
+ */
+
+/**
+ * @desc: 与 `getopt_long` 的 `val` 字段对应的 CLI 选项枚举，用于 `switch` 分发。
  * @params: 无
  * @return: 无
- * @others: 详见 printUsage 英文说明；采样超参多数来自输入 JSON 而非 CLI。
+ * @others: 取值自 900 起，避免与 ASCII 单字符短选项返回值冲突；与 `inferenceOptions[]` 顺序一致。
  */
 // Enum for command line option IDs (using traditional enum for C library compatibility)
 enum LLMInferenceOptionId : int
@@ -69,10 +76,10 @@ enum LLMInferenceOptionId : int
 };
 
 /**
- * @desc: Eagle 投机解码相关超参：draft 模型扩展候选 token 树，base 模型做批量校验。
+ * @desc: Eagle 投机解码 CLI 超参容器；传入 `LLMInferenceSpecDecodeRuntime` 的 `EagleDraftingConfig`，影响 draft 树形与 base 验证 batch 宽度。
  * @params: 无（聚合类型）
  * @return: 无
- * @others: draftTopK 为每步分支扇出；draftStep 为树深度；verifyTreeSize 为送入 base 的节点数上界，须不超过 1+topK+(step-1)*topK^2。
+ * @others: `draftTopK`/`draftStep` 决定候选树规模；`verifyTreeSize` 须不大于理论节点数 `1 + draftTopK + (draftStep-1)*draftTopK^2`。与标准路径互斥，且当前实现忽略 LoRA 权重表。
  */
 struct EagleArgs
 {
@@ -83,10 +90,10 @@ struct EagleArgs
 };
 
 /**
- * @desc: llm_inference 命令行参数聚合；engine 路径、profile/warmup/Eagle 与对输入 JSON 的 batch/长度覆盖。
+ * @desc: 从 `argv` 解析得到的运行期开关与路径；决定加载哪套 engine 目录、是否打 profile、是否走 Eagle，以及对输入 JSON 中 `batch_size` / `max_generate_length` 的覆盖。
  * @params: 无（聚合类型）
  * @return: 无
- * @others: batchSize/maxGenerateLength 为 -1 表示沿用 JSON；temperature/top_p/top_k 仅能从 JSON 指定。
+ * @others: `engineDir` — 文本 LLM 的 engine 文件目录；`multimodalEngineDir` — 视觉 encoder 的 engine 目录（可空）。`batchSize`/`maxGenerateLength` 为 -1 表示不覆盖 JSON。`temperature`/`top_p`/`top_k` **不能**从 CLI 改，仅 JSON（见 `parseInputFile`）。
  */
 struct LLMInferenceArgs
 {
@@ -106,10 +113,10 @@ struct LLMInferenceArgs
 };
 
 /**
- * @desc: 向 stderr 打印 llm_inference 用法与选项（英文）。
- * @params: programName 一般为 argv[0]
+ * @desc: 向 stderr 输出用法与选项列表（英文），与 `parseLLMInferenceArgs` 接受的 long option 名一致。
+ * @params: programName — 可执行文件展示名，通常为 `argv[0]`
  * @return: 无
- * @others: 无
+ * @others: 不参与 I/O 重定向以外的逻辑；调用方在解析失败或 `--help` 时触发。
  */
 void printUsage(char const* programName)
 {
@@ -146,10 +153,10 @@ void printUsage(char const* programName)
 }
 
 /**
- * @desc: 解析 CLI 并校验必填项（inputFile、engineDir、outputFile）；设置 TensorRT 日志级别。
- * @params: args 输出；argc/argv 标准主函数形参
- * @return: 成功 true；缺参或非法数值 false
- * @others: 遇 HELP 时置 args.help 并返回 true；与 parseInputFile 独立。
+ * @desc: 使用 `getopt_long` 解析长选项，填充 `LLMInferenceArgs`；校验 `--inputFile`/`--engineDir`/`--outputFile` 非空；按 `--debug` 设置全局 TensorRT `gLogger` 级别。
+ * @params: args — 输出，聚合路径与开关；argc — 参数个数；argv — 参数向量（会被 getopt 重排，仅应在解析阶段使用）
+ * @return: true 表示可继续运行（含 `--help`）；false 表示非法选项或数值
+ * @others: 不打开 JSON 文件；与 `parseInputFile` 正交。`optarg` 指向当前选项的 C 字符串参数（由 getopt 管理生命周期，应立即拷贝到 `std::string` 的选项此处已直接赋值指针，符合 getopt 在单次解析内的用法）。
  */
 bool parseLLMInferenceArgs(LLMInferenceArgs& args, int argc, char* argv[])
 {
@@ -171,6 +178,7 @@ bool parseLLMInferenceArgs(LLMInferenceArgs& args, int argc, char* argv[])
         {"maxGenerateLength", required_argument, 0, LLMInferenceOptionId::MAX_GENERATE_LENGTH}, {0, 0, 0, 0}};
 
     int opt;
+    // 循环消费 argv；返回 -1 表示选项结束。空字符串 "" 作为 shortopts 表示只接受长选项。
     while ((opt = getopt_long(argc, argv, "", inferenceOptions, nullptr)) != -1)
     {
         switch (opt)
@@ -285,6 +293,7 @@ bool parseLLMInferenceArgs(LLMInferenceArgs& args, int argc, char* argv[])
         }
     }
 
+    // 以下必填项与 JSON 解析无关：确保后续能打开输入文件、加载 engine、写出结果路径。
     LOG_INFO("args.inputFile: %s", args.inputFile.c_str());
     if (args.inputFile.empty())
     {
@@ -337,6 +346,7 @@ bool parseLLMInferenceArgs(LLMInferenceArgs& args, int argc, char* argv[])
         LOG_INFO("Eagle verify tree size: %d", args.eagleArgs.verifyTreeSize);
     }
 
+    // TensorRT 插件与 engine 加载阶段的日志粒度；VERBOSE 便于排查 plan 绑定与插件注册问题。
     if (args.debug)
     {
         gLogger.setLevel(nvinfer1::ILogger::Severity::kVERBOSE);
@@ -350,10 +360,10 @@ bool parseLLMInferenceArgs(LLMInferenceArgs& args, int argc, char* argv[])
 }
 
 /**
- * @desc: 读取输入 JSON，解析全局采样与模板开关，按 batch_size 切分为多份 LLMGenerationRequest；收集 LoRA 路径映射。
- * @params: inputFilePath 文件路径；batchSizeOverride/maxGenerateLengthOverride 为 -1 时使用 JSON 内数值
- * @return: pair：LoRA 名->权重路径映射，以及 batch 请求向量；失败抛 std::runtime_error
- * @others: 图像在 CPU 侧 decode 入 imageBuffers，再交给运行时上传 GPU 与视觉 engine；上下文 prefill、增量解码、KV cache、logits 均在 edgellmCore 内完成，不在此函数。
+ * @desc: 将符合 `INPUT_FORMAT.md` 的 JSON 转为 `rt::LLMGenerationRequest` 向量：读取全局采样与模板标志，按 `batch_size`（可被 CLI 覆盖）将 `requests` 滑窗分组，并校验同 batch 内 LoRA 名一致。
+ * @params: inputFilePath — 输入 JSON 路径；batchSizeOverride — 若 >=1 则覆盖 JSON 的 `batch_size`，否则用 JSON；maxGenerateLengthOverride — 若 >=1 则覆盖 JSON 的 `max_generate_length`
+ * @return: `first` 为 LoRA 逻辑名到 `.safetensors` 路径映射；`second` 为每个合成 batch 的请求对象列表；异常时抛出 `std::runtime_error`
+ * @others: `temperature`/`top_p`/`top_k` 写入每个 `LLMGenerationRequest`，**实际采样在运行时** `sampleTokens` 路径执行，本函数不做概率计算。图像经 `loadImageFromFile` 留在 **Host** 侧 `ImageData`，GPU 上传在 `handleRequest` 内。张量 shape（如 `[B,T]`）由 engine 与 runner 决定，此处仅构造对话结构与标量超参。
  */
 std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGenerationRequest>> parseInputFile(
     std::filesystem::path const& inputFilePath, int32_t batchSizeOverride = -1, int64_t maxGenerateLengthOverride = -1)
@@ -361,6 +371,7 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
     std::vector<rt::LLMGenerationRequest> batchedRequests;
 
     Json inputData;
+    // 以文本方式读入整文件；超大 JSON 时峰值内存约等于文件大小量级。
     std::ifstream inputFileStream(inputFilePath);
     if (!inputFileStream.is_open())
     {
@@ -379,7 +390,7 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
         throw std::runtime_error("Failed to parse input file: " + inputFilePath.string());
     }
 
-    // 全局超参：同一 JSON 内所有 batch 共享 temperature/top_p/top_k/max_generate_length（除非 CLI 覆盖后两者）。
+    // 全局超参：所有合成 batch 共享；写入 `LLMGenerationRequest` 后由运行时统一读取。
     int batchSize = (batchSizeOverride != -1) ? batchSizeOverride : inputData.value("batch_size", 1);
     if (batchSize <= 0)
     {
@@ -387,6 +398,7 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
         throw std::runtime_error("Invalid batch_size value (must be positive)");
     }
 
+    // 采样标量：无 Tensor shape；在 runtime 内应用于 logits 分布（实现见 Tier B 文档所列源文件）。
     float temperature = inputData.value("temperature", 1.0f);
     float topP = inputData.value("top_p", 0.8f);
     int64_t topK = inputData.value("top_k", 50);
@@ -399,13 +411,8 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
         throw std::runtime_error("Invalid max_generate_length value (must be positive)");
     }
 
-    // Read apply_chat_template flag (defaults to true)
     bool applyChatTemplate = inputData.value("apply_chat_template", true);
-
-    // Read add_generation_prompt flag (defaults to true)
     bool addGenerationPrompt = inputData.value("add_generation_prompt", true);
-
-    // Read enable_thinking flag (defaults to false)
     bool enableThinking = inputData.value("enable_thinking", false);
 
     std::unordered_map<std::string, std::string> loraWeightsMap;
@@ -446,17 +453,15 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
             batchRequest.addGenerationPrompt = addGenerationPrompt;
             batchRequest.enableThinking = enableThinking;
 
-            // Track LoRA weights for validation
+            // 同一 batch 内所有子请求的 lora_name 须相同，否则运行时无法单次 launch 切换多套权重。
             std::string batchLoraWeightsName = "";
             bool firstInBatch = true;
 
-            // Add requests to this batch (up to batchSize requests)
             size_t endIdx = std::min(startIdx + batchSize, numRequests);
             for (size_t requestIdx = startIdx; requestIdx < endIdx; ++requestIdx)
             {
                 auto const& requestItem = requestsArray[requestIdx];
 
-                // Each request must be an object with "messages" key
                 if (!requestItem.is_object())
                 {
                     LOG_ERROR("Each request must be an object with 'messages' key");
@@ -478,13 +483,11 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
 
                 auto const& messagesArray = requestItem["messages"];
 
-                // Get per-conversation LoRA name if present
                 std::string requestLoraName = "";
                 if (requestItem.contains("lora_name") && !requestItem["lora_name"].is_null())
                 {
                     requestLoraName = requestItem["lora_name"].get<std::string>();
 
-                    // Validate that the LoRA name exists in available_lora_weights
                     if (!requestLoraName.empty() && loraWeightsMap.find(requestLoraName) == loraWeightsMap.end())
                     {
                         LOG_ERROR("LoRA name '%s' not found in available_lora_weights", requestLoraName.c_str());
@@ -493,7 +496,6 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
                     }
                 }
 
-                // Validate that all requests in this batch use the same LoRA weights
                 if (firstInBatch)
                 {
                     batchLoraWeightsName = requestLoraName;
@@ -510,7 +512,6 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
                     }
                 }
 
-                // Parse messages into structured format
                 std::vector<rt::Message> chatMessages;
                 std::vector<rt::imageUtils::ImageData> imageBuffers;
 
@@ -527,10 +528,8 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
 
                     auto const& contentJson = messageJson["content"];
 
-                    // Support both string (simple text) and array (multimodal) formats
                     if (contentJson.is_string())
                     {
-                        // Simple string format - treat as text content
                         rt::Message::MessageContent msgContent;
                         msgContent.type = "text";
                         msgContent.content = contentJson.get<std::string>();
@@ -538,7 +537,6 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
                     }
                     else if (contentJson.is_array())
                     {
-                        // Array format - supports multimodal content
                         for (auto const& contentItemJson : contentJson)
                         {
                             if (!contentItemJson.contains("type"))
@@ -550,7 +548,6 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
                             rt::Message::MessageContent msgContent;
                             msgContent.type = contentItemJson["type"].get<std::string>();
 
-                            // Based on type, extract the appropriate field
                             if (msgContent.type == "text")
                             {
                                 msgContent.content = contentItemJson["text"].get<std::string>();
@@ -584,14 +581,12 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
                     chatMessages.push_back(chatMsg);
                 }
 
-                // Create prompt structure with structured messages
                 rt::LLMGenerationRequest::Request request;
                 request.messages = std::move(chatMessages);
                 request.imageBuffers = std::move(imageBuffers);
                 batchRequest.requests.push_back(std::move(request));
             }
 
-            // Set the LoRA weights name for this batch (all requests in this batch use the same LoRA weights)
             if (!batchLoraWeightsName.empty())
             {
                 batchRequest.loraWeightsName = batchLoraWeightsName;
@@ -610,10 +605,10 @@ std::pair<std::unordered_map<std::string, std::string>, std::vector<rt::LLMGener
 }
 
 /**
- * @desc: llm_inference 入口：解析 CLI、加载插件、解析 JSON、创建 Runtime 与 stream、可选 CUDA Graph、warmup、逐 batch 调用 handleRequest、写出结果与 profile。
- * @params: argc/argv 标准主函数形参
- * @return: EXIT_SUCCESS 或 EXIT_FAILURE（任一批次失败则失败）
- * @others: pluginHandles 持有动态库句柄生命周期；handleRequest 内完成 TensorRT engine 执行、KV cache 与采样，本文件仅编排数据流与观测。
+ * @desc: 进程入口：CLI → 可选 MemoryMonitor → `loadEdgellmPluginLib` → JSON → 构造 `LLMInferenceRuntime` 或 `LLMInferenceSpecDecodeRuntime` → CUDA Graph 捕获 → warmup → 逐 batch `handleRequest` → 控制台/profile JSON/响应 JSON 写出。
+ * @params: argc — 参数个数；argv — 参数向量
+ * @return: `EXIT_SUCCESS` 或 `EXIT_FAILURE`（任一 batch 的 `handleRequest` 失败则失败）
+ * @others: `pluginHandles` 析构前须保持有效，以便插件在 engine 反序列化及整段推理期间已注册。`cudaStream_t stream` 贯穿 `handleRequest` 与 Graph capture，**同步点均在 runtime 实现内部**（本文件不显式 `cudaStreamSynchronize`）。Prefill/Decode、KV 更新、logits 采样见 Tier B 所列 `llmInferenceRuntime.cpp` 等。
  */
 int main(int argc, char* argv[])
 {
@@ -630,18 +625,19 @@ int main(int argc, char* argv[])
     }
     bool profilerEnabled = args.dumpProfile;
     MemoryMonitor memoryMonitor;
-    // 仅在需要打印/导出 profile 时开启监控，避免对纯推理路径增加后台线程与 cudaMemGetInfo 开销。
+    // dGPU 时启动异步 `cudaMemGetInfo` 轮询；iGPU 路径不启线程，详见 `memoryMonitor.cpp`。
     if (profilerEnabled)
     {
         memoryMonitor.start();
     }
 
-    // 加载 Edge LLM 自定义 TensorRT 插件动态库；无插件则包含自定义层的 engine 无法反序列化执行。
+    // 必须在创建 Runtime / 反序列化 engine 之前完成；返回的句柄容器需存活至进程退出前。
     auto pluginHandles = loadEdgellmPluginLib();
     std::unordered_map<std::string, std::string> loraWeightsMap;
     std::vector<rt::LLMGenerationRequest> batchedRequests;
     try
     {
+        // `formattedRequests` 等字段在 `handleRequest` 内由运行时填充；此处仅构造原始对话与超参。
         std::tie(loraWeightsMap, batchedRequests)
             = parseInputFile(args.inputFile, args.batchSize, args.maxGenerateLength);
         LOG_INFO("Successfully parsed %zu LoRA weights from input file.", loraWeightsMap.size());
@@ -664,6 +660,7 @@ int main(int argc, char* argv[])
     std::unique_ptr<rt::LLMInferenceRuntime> llmInferenceRuntime{nullptr};
     std::unique_ptr<rt::LLMInferenceSpecDecodeRuntime> eagleInferenceRuntime{nullptr};
     cudaStream_t stream;
+    // 非阻塞流：后续 kernel 与 TensorRT enqueue 默认异步；同步由 runtime 在读写 logits/结果前触发。
     CUDA_CHECK(cudaStreamCreate(&stream));
 
     if (args.eagleArgs.enabled)
@@ -678,6 +675,7 @@ int main(int argc, char* argv[])
             args.eagleArgs.draftTopK, args.eagleArgs.draftStep, args.eagleArgs.verifyTreeSize};
         try
         {
+            // 构造期加载 base/draft 相关 engine 文件与资源；可能触发设备内存分配与 TensorRT runtime 初始化。
             eagleInferenceRuntime = std::make_unique<rt::LLMInferenceSpecDecodeRuntime>(
                 args.engineDir, args.multimodalEngineDir, draftingConfig, stream);
         }
@@ -687,7 +685,7 @@ int main(int argc, char* argv[])
             return EXIT_FAILURE;
         }
 
-        // 三次 capture*CudaGraph：将 draft/base 各阶段的重复 kernel 启动固化为 CUDA Graph，降低 launch 开销；失败则退回普通 enqueue。
+        // Graph 捕获阶段会执行一次「模板」推理序列以记录依赖；失败则仍走动态 launch（见 runtime 实现）。
         bool const draftProposalCaptureStatus = eagleInferenceRuntime->captureDraftProposalCudaGraph(stream);
         if (!draftProposalCaptureStatus)
         {
@@ -716,6 +714,7 @@ int main(int argc, char* argv[])
         // 标准自回归解码：构造时传入 loraWeightsMap，运行期可按请求名加载对应权重（与 Eagle 路径互斥）。
         try
         {
+            // 传入 LoRA 映射供非 Eagle 路径在 `handleRequest` 中按名加载权重；构造期读 engine 目录。
             llmInferenceRuntime = std::make_unique<rt::LLMInferenceRuntime>(
                 args.engineDir, args.multimodalEngineDir, loraWeightsMap, stream);
         }
@@ -734,6 +733,7 @@ int main(int argc, char* argv[])
     // Warmup：用首个 batch 反复跑通以完成 JIT/缓存/graph 稳定化；期间关闭 profiling 计时，避免污染正式 benchmark。
     if (args.warmup > 0)
     {
+        // 关闭 gTimer 等统计，避免把预热算进正式 profile。
         setProfilingEnabled(false);
         LOG_INFO("Starting warmup with %d runs using the first request...", args.warmup);
         auto& firstRequest = batchedRequests[0];
@@ -766,7 +766,6 @@ int main(int argc, char* argv[])
         setProfilingEnabled(true);
     }
 
-    // 主循环：每个 batch 调用 handleRequest，在 stream 上完成 prefill+decode；response 内为 CPU 侧 std::string 输出。
     nlohmann::json outputData;
     outputData["input_file"] = args.inputFile;
     outputData["responses"] = nlohmann::json::array();
@@ -775,14 +774,14 @@ int main(int argc, char* argv[])
     std::string errorMessage = "TensorRT Edge LLM cannot handle this request. Fails.";
     size_t failedCount = 0;
 
-    // handleRequest 内部会同步等待该 batch 在 stream 上完成；此处串行遍历多个 batch。
+    // 各 batch 顺序执行；吞吐优化需在 runtime 或批大小上调整，而非本循环并行化。
     LOG_INFO("Processing %zu batched requests...", batchedRequests.size());
     for (size_t requestIdx = 0; requestIdx < batchedRequests.size(); ++requestIdx)
     {
         auto& request = batchedRequests[requestIdx];
         rt::LLMGenerationResponse response;
 
-        // Show progress every 10% or every 100 requests, whichever is smaller
+        // 控制日志频率：大批量评测时避免每 batch 一条 LOG。
         size_t progressInterval = std::max(size_t(1), std::min(batchedRequests.size() / 10, size_t(100)));
         if ((requestIdx + 1) % progressInterval == 0 || requestIdx == 0 || requestIdx == batchedRequests.size() - 1)
         {
@@ -803,7 +802,6 @@ int main(int argc, char* argv[])
 
         if (requestStatus)
         {
-            // Display inference output to console if --dumpOutput is enabled
             if (args.dumpOutput)
             {
                 for (size_t batchIdx = 0; batchIdx < response.outputTexts.size(); ++batchIdx)
@@ -815,7 +813,6 @@ int main(int argc, char* argv[])
         }
         else
         {
-            // Handle failed request - highlight failures
             hasFailedRequest = true;
             failedCount++;
             LOG_ERROR("*** FAILED *** Request %zu failed to process!", requestIdx);
@@ -829,7 +826,6 @@ int main(int argc, char* argv[])
             responseJson["output_text"] = sanitizeUtf8ForJson(outputText);
             responseJson["request_idx"] = requestIdx;
             responseJson["batch_idx"] = batchIdx;
-            // Store messages for reference
             nlohmann::json messagesJson = nlohmann::json::array();
             for (auto const& msg : request.requests[batchIdx].messages)
             {
@@ -857,14 +853,13 @@ int main(int argc, char* argv[])
                 messagesJson.push_back(msgJson);
             }
             responseJson["messages"] = messagesJson;
-            // Store formatted prompts for reference
+            // `formattedRequests` 由本次 `handleRequest` 填充，供复现模板应用后的完整 prompt。
             responseJson["formatted_system_prompt"] = request.formattedRequests[batchIdx].formattedSystemPrompt;
             responseJson["formatted_complete_request"] = request.formattedRequests[batchIdx].formattedCompleteRequest;
             outputData["responses"].push_back(responseJson);
         }
     }
 
-    // Final processing summary
     LOG_INFO("Processing complete: %zu/%zu batched requests successful", batchedRequests.size() - failedCount,
         batchedRequests.size());
     if (failedCount > 0)
@@ -875,7 +870,8 @@ int main(int argc, char* argv[])
     if (profilerEnabled)
     {
         setProfilingEnabled(false);
-        memoryMonitor.stop(); // join 异步 monitor 线程，冻结峰值 GPU/CPU 统计供 outputMemoryProfile 使用。
+        // stop() 会 join 监控线程，保证随后读取的峰值显存/CPU 为整段推理区间统计。
+        memoryMonitor.stop();
     }
 
     if (args.dumpProfile)
@@ -885,7 +881,6 @@ int main(int argc, char* argv[])
         profileOutput << "=== Performance Summary ===" << std::endl;
         if (args.eagleArgs.enabled)
         {
-            // Eagle runtime with detailed metrics
             auto prefillMetrics = eagleInferenceRuntime->getPrefillMetrics();
             auto eagleGenerationMetrics = eagleInferenceRuntime->getEagleGenerationMetrics();
             auto multimodalMetrics = eagleInferenceRuntime->getMultimodalMetrics();
@@ -906,7 +901,6 @@ int main(int argc, char* argv[])
         LOG_INFO("%s", profileOutput.str().c_str());
     }
 
-    // Export profile to JSON file
     if (!args.profileOutputFile.empty())
     {
         try
@@ -915,42 +909,30 @@ int main(int argc, char* argv[])
 
             if (args.eagleArgs.enabled)
             {
-                // Eagle runtime with detailed metrics
                 auto prefillMetrics = eagleInferenceRuntime->getPrefillMetrics();
                 auto eagleGenerationMetrics = eagleInferenceRuntime->getEagleGenerationMetrics();
                 auto multimodalMetrics = eagleInferenceRuntime->getMultimodalMetrics();
 
-                // Add high-level metrics
                 addJsonPrefillSummary(profileJson, prefillMetrics);
                 addJsonEagleGenerationSummary(profileJson, eagleGenerationMetrics);
                 addJsonMultimodalSummary(profileJson, multimodalMetrics);
-
-                // Add detailed timing stages
                 addJsonTimingStages(profileJson);
-
-                // Add memory usage
                 addJsonMemorySummary(profileJson, memoryMonitor);
             }
             else
             {
                 auto multimodalMetrics = llmInferenceRuntime->getMultimodalMetrics();
-
-                // Add high-level metrics
                 addJsonPrefillSummary(profileJson, llmInferenceRuntime->getPrefillMetrics());
                 addJsonGenerationSummary(profileJson, llmInferenceRuntime->getGenerationMetrics());
                 addJsonMultimodalSummary(profileJson, multimodalMetrics);
-
-                // Add detailed timing stages
                 addJsonTimingStages(profileJson);
-
-                // Add memory usage
                 addJsonMemorySummary(profileJson, memoryMonitor);
             }
 
             std::ofstream profileFile(args.profileOutputFile);
             if (profileFile.is_open())
             {
-                profileFile << profileJson.dump(2); // Pretty print with 2 space indentation
+                profileFile << profileJson.dump(2);
                 profileFile.close();
                 LOG_INFO("Profile data exported to: %s", args.profileOutputFile.c_str());
             }
@@ -967,13 +949,12 @@ int main(int argc, char* argv[])
         }
     }
 
-    // Export to JSON file
     try
     {
         std::ofstream outputFile(args.outputFile);
         if (outputFile.is_open())
         {
-            outputFile << outputData.dump(4); // Pretty print with 4 spaces indentation
+            outputFile << outputData.dump(4);
             outputFile.close();
             LOG_INFO("All responses exported to: %s", args.outputFile.c_str());
         }

@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+// 中文注释（Tier B）：LinearKVCache 设备缓冲与序列长度张量的生命周期及提交语义。
+
 #include "runtime/linearKVCache.h"
 #include "common/logger.h"
 
@@ -34,6 +36,7 @@ namespace rt
 LinearKVCache::LinearKVCache(CacheConfig const& config, cudaStream_t stream)
     : mConfig(config)
 {
+    // 单块 cudaMalloc：覆盖所有层与 batch 的 K/V；后续按层偏移切片给 TensorRT binding（见 getKVCacheForDecoderLayer）。
     int64_t const kvCacheVolume = mConfig.numDecoderLayers * mConfig.maxBatchSize * 2 * mConfig.numKVHeads
         * mConfig.maxSequenceLength * mConfig.headDim;
     CUDA_CHECK(cudaMalloc(&mDeviceKVCache, kvCacheVolume * sizeof(KVCacheType)));
@@ -105,6 +108,7 @@ rt::Tensor LinearKVCache::getKVCacheBuffer()
         DeviceType::kGPU, KVCacheTypeTRT);
 }
 
+// 新请求开始：把 host 上每条序列已复用的 KV 长度拷到 GPU，供 prefill 时引擎识别「从哪一维开始续写」；全 0 则 mKVCacheAllEmpty=true，走 dummy KV start index。
 void LinearKVCache::resetForNewSequences(rt::Tensor const& reuseKVCacheLengths, cudaStream_t stream)
 {
     int32_t const batchSize = static_cast<int32_t>(reuseKVCacheLengths.getShape()[0]);
@@ -134,6 +138,7 @@ void LinearKVCache::resetForNewSequences(rt::Tensor const& reuseKVCacheLengths, 
         reuseKVCacheLengths.getMemoryCapacity(), cudaMemcpyHostToDevice, stream));
 }
 
+// Prefill 完成：用 GPU 上的 newContextLengths（通常即本步有效 context）增量更新 mDeviceKVCacheLengths。
 void LinearKVCache::commitSequenceLength(rt::Tensor const& newContextLengths, cudaStream_t stream)
 {
     check::check(newContextLengths.getDataType() == DataType::kINT32,
@@ -149,6 +154,7 @@ void LinearKVCache::commitSequenceLength(rt::Tensor const& newContextLengths, cu
     mKVCacheAllEmpty = false;
 }
 
+// Decode 每步默认 +1：与 vanilla decode 单 token 推进一致。
 void LinearKVCache::commitSequenceLength(int32_t increment, cudaStream_t stream)
 {
     kernel::incrementLengthTensor(mDeviceKVCacheLengths, increment, stream);

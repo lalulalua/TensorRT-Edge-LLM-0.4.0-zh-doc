@@ -33,6 +33,9 @@
 #include <sstream>
 #include <string>
 
+// 中文注释（Tier B）：本文件负责 TensorRT engine 的 prefill / decode 两 profile 绑定与 enqueueV3；
+// KV 物理块由 LinearKVCache 提供，past/present 指向同一块显存，形状由 bindKVCacheToEngine 与插件约定。
+
 using namespace trt_edgellm;
 using namespace nvinfer1;
 
@@ -670,6 +673,7 @@ LLMEngineRunner::~LLMEngineRunner()
 
 bool LLMEngineRunner::bindKVCacheToEngine(int32_t activeBatchSize)
 {
+    // 每层 past / present 绑定到 LinearKVCache 的同一片连续显存；TRT Dims 为 5D：[B,2,KV,heads,maxKV,dim]。
     // Prepare special input binding shape for prefill stage KVCache input.
     Dims const kvCacheDims = {5, {activeBatchSize, 2, mConfig.numKVHeads, mConfig.maxKVCacheCapacity, mConfig.headDim}};
     bool status{true};
@@ -820,6 +824,8 @@ bool LLMEngineRunner::prefillStepInputValidation(rt::Tensor const& inputIds, rt:
     return true;
 }
 
+// Prefill：一次处理 [B,T] packed tokens；contextLengths / last_token_ids 从 host 拷入 GPU 供 Attention 插件定位；
+// enqueueV3 后 commitSequenceLength 把本步结束后的序列长度写回 KV 长度张量。
 bool LLMEngineRunner::executePrefillStep(rt::Tensor const& inputIds, rt::Tensor const& hostContextLengths,
     rt::OptionalInputTensor multimodalEmbeddings, rt::OptionalInputTensors extraInputTensors, rt::Tensor& outputLogits,
     rt::OptionalOutputTensor outputHiddenStates, cudaStream_t stream)
@@ -946,7 +952,7 @@ bool LLMEngineRunner::executePrefillStep(rt::Tensor const& inputIds, rt::Tensor 
         return false;
     }
 
-    // launch the engine execution.
+    // TensorRT 异步提交；与 LLMInferenceRuntime 侧采样前的 cudaStreamSynchronize 配合，保证 logits 可读。
     bool executeStatus{true};
     executeStatus &= mPrefillExecutionContext->enqueueV3(stream);
     if (!executeStatus)
@@ -994,6 +1000,8 @@ bool LLMEngineRunner::vanillaDecodingStepInputValidation(rt::Tensor const& input
     return true;
 }
 
+// Vanilla decode：输入 [B,1] 为上一步采样 token；从 KV 长度张量复制到 mSequenceContextLengths 并 +1 以满足 AttentionPlugin 约定；
+// 若命中 hash 则走 cudaGraphLaunch，否则 setTensorAddress + enqueueV3；最后 commitSequenceLength(+1) 推进设备侧 KV 长度。
 bool LLMEngineRunner::executeVanillaDecodingStep(
     rt::Tensor const& inputIds, rt::Tensor& outputLogits, cudaStream_t stream)
 {

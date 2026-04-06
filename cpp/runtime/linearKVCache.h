@@ -32,6 +32,10 @@ namespace rt
 //! 2. Memory Layout: [numDecoderLayers, maxBatchSize, 2, numKVHeads, maxSequenceLength, headDim]
 //! 3. Synchronous execution of batch requests, all the sequences in the batch will run prefill
 //!    or decode at the same time.
+//
+// 中文（Tier B）：整块 GPU 显存按「最大层数 × batch × 2(K/V) × heads × maxSequenceLength × headDim」**一次性分配**，
+// **非环形缓冲区**；当前写入位置由设备侧 mDeviceKVCacheLengths 与 TensorRT Attention 插件协同推进，**无显式 host 侧指针取模**。
+// 序列长度超过 maxSequenceLength（构建期与 engine 一致）会导致未定义行为，故上层需截断生成步数（见 LLMInferenceRuntime::handleRequest）。
 class LinearKVCache
 {
 public:
